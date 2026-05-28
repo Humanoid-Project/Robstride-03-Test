@@ -21,6 +21,8 @@ sudo ip link set can0 txqueuelen 1000
 ## Usage
 
 ```bash
+cd rs03_test/
+
 # Communication test
 python3 vbus_test.py
 
