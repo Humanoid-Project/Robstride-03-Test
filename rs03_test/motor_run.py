@@ -43,8 +43,6 @@ def control_op(pos, vel, kp, kd, torque=0.0):
     send(0x01, data16, data)
     return recv()
 
-# ── 실행 ──────────────────────────────────
-
 print("Enable...")
 reply = enable()
 if reply:
