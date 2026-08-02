@@ -5,9 +5,9 @@
 요청해 응답하는 모터만 목록으로 출력한다.
 
 사용 예:
-    python3 check_id.py                # ID 1..12 확인
+    python3 check_id.py                       # can0, can1 에서 ID 1..12 확인
+    python3 check_id.py --channels can0       # can0 만 확인
     python3 check_id.py --id-min 1 --id-max 32
-    python3 check_id.py --channel can0
 """
 import argparse
 import time
@@ -15,7 +15,7 @@ import time
 import can
 
 HOST_ID = 0xFD
-DEFAULT_CHANNEL = "can0"
+DEFAULT_CHANNELS = ["can0", "can1"]
 DEFAULT_INTERFACE = "socketcan"
 DEFAULT_ID_MIN = 1
 DEFAULT_ID_MAX = 12
@@ -75,11 +75,23 @@ def check_ids(bus, host_id, id_range):
     return found
 
 
+def check_channel(channel, interface, host_id, id_range):
+    print(f"Checking IDs {id_range.start}..{id_range.stop - 1} on {channel} ...")
+    bus = can.Bus(channel=channel, interface=interface)
+    try:
+        found = check_ids(bus, host_id, id_range)
+    finally:
+        bus.shutdown()
+    print()
+    return {motor_id for motor_id, _ in found}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="데이지 체인에 연결된 모터의 ID를 구동 없이 탐색해 출력한다."
     )
-    parser.add_argument("--channel", default=DEFAULT_CHANNEL, help="CAN 채널, 기본값: can0")
+    parser.add_argument("--channels", nargs="+", default=DEFAULT_CHANNELS,
+                        help=f"확인할 CAN 채널들, 기본값: {' '.join(DEFAULT_CHANNELS)}")
     parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can 인터페이스, 기본값: socketcan")
     parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="호스트 CAN ID, 기본값: 0xFD")
     parser.add_argument("--id-min", type=int, default=DEFAULT_ID_MIN, help="탐색 시작 ID, 기본값: 1")
@@ -87,25 +99,37 @@ def main():
     args = parser.parse_args()
 
     id_range = range(args.id_min, args.id_max + 1)
-    print(f"Checking IDs {args.id_min}..{args.id_max} on {args.channel} ...")
-
-    bus = can.Bus(channel=args.channel, interface=args.interface)
-    try:
-        found = check_ids(bus, args.host_id, id_range)
-    finally:
-        bus.shutdown()
-
-    found_ids = sorted(motor_id for motor_id, _ in found)
     expected = list(id_range)
-    missing = [i for i in expected if i not in found_ids]
+
+    found_by_channel = {}
+    for channel in args.channels:
+        found_by_channel[channel] = check_channel(channel, args.interface, args.host_id, id_range)
+
+    all_found = set().union(*found_by_channel.values()) if found_by_channel else set()
+    missing_everywhere = [i for i in expected if i not in all_found]
+
+    print("=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print(f"{'ID':>3}  " + "  ".join(f"{ch:<8}" for ch in args.channels))
+    for motor_id in expected:
+        row = "  ".join(
+            f"{'OK':<8}" if motor_id in found_by_channel[ch] else f"{'--':<8}"
+            for ch in args.channels
+        )
+        print(f"{motor_id:>3}  {row}")
 
     print()
-    print(f"Detected {len(found_ids)}/{len(expected)} motors: "
-          f"{', '.join(str(i) for i in found_ids) if found_ids else '(none)'}")
-    if missing:
-        print(f"Missing IDs: {', '.join(str(i) for i in missing)}")
+    for channel in args.channels:
+        found_ids = sorted(found_by_channel[channel])
+        print(f"{channel}: {len(found_ids)}/{len(expected)} "
+              f"{', '.join(str(i) for i in found_ids) if found_ids else '(none)'}")
+
+    print()
+    if missing_everywhere:
+        print(f"어느 채널에서도 응답하지 않은 ID: {', '.join(str(i) for i in missing_everywhere)}")
     else:
-        print("All expected IDs responded.")
+        print(f"ID {args.id_min}..{args.id_max} 전부 (can0 또는 can1 중) 하나 이상에서 응답함.")
 
 
 if __name__ == "__main__":
