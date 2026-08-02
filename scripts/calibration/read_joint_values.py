@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""리스트에 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.
+"""채널별로 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.
 
-아래 MOTOR_IDS 리스트를 편집해서 읽고 싶은 모터 ID만 넣으면 된다.
-(명령줄에서 --ids 로 덮어쓸 수도 있다.)
+아래 CHANNEL_MOTOR_IDS 를 편집해서 채널별로 읽고 싶은 모터 ID를 지정하면 된다.
+(명령줄에서 --channels 로 확인할 채널을 제한할 수 있다.)
 
 사용 예:
-    python3 read_joint_values.py                 # MOTOR_IDS 리스트 그대로 1회 출력
-    python3 read_joint_values.py --ids 6 7 8      # 리스트 대신 6,7,8만
-    python3 read_joint_values.py --watch          # 0.5초마다 반복 출력 (Ctrl-C 종료)
+    python3 read_joint_values.py                  # can0: 1~6, can1: 7~12 모두 출력
+    python3 read_joint_values.py --channels can0   # can0 만 출력
+    python3 read_joint_values.py --watch           # 0.5초마다 반복 출력 (Ctrl-C 종료)
 """
 import argparse
 import math
@@ -17,12 +17,14 @@ import time
 import can
 
 HOST_ID = 0xFD
-DEFAULT_CHANNEL = "can0"
 DEFAULT_INTERFACE = "socketcan"
 MECH_POS_INDEX = 0x7019
 
-# ── 여기를 편집하세요: 관절값을 읽을 모터 ID 리스트 ───────────────
-MOTOR_IDS = [7, 8, 9, 10, 11]
+# ── 여기를 편집하세요: 채널별로 관절값을 읽을 모터 ID 목록 ───────────
+CHANNEL_MOTOR_IDS = {
+    "can0": [1, 2, 3, 4, 5, 6],
+    "can1": [7, 8, 9, 10, 11, 12],
+}
 # ──────────────────────────────────────────────────────────────
 
 JOINT_MAP = {
@@ -80,24 +82,34 @@ def joint_name(motor_id):
     return JOINT_MAP.get(motor_id, f"ID{motor_id}")
 
 
-def read_all(bus, host_id, motor_ids, timeout):
-    print(f"{'ID':>3}  {'joint':<18}  {'position':>26}")
-    print("-" * 52)
-    for motor_id in motor_ids:
-        position = read_mech_position(bus, host_id, motor_id, timeout=timeout)
-        if position is None:
-            value = "no response"
-        else:
-            value = f"{position:+8.4f} rad ({math.degrees(position):+8.2f} deg)"
-        print(f"{motor_id:>3}  {joint_name(motor_id):<18}  {value:>26}")
+def read_channel(channel, interface, host_id, motor_ids, timeout):
+    print(f"[{channel}]")
+    print(f"  {'ID':>3}  {'joint':<18}  {'position':>26}")
+    print("  " + "-" * 50)
+    bus = can.Bus(channel=channel, interface=interface)
+    try:
+        for motor_id in motor_ids:
+            position = read_mech_position(bus, host_id, motor_id, timeout=timeout)
+            if position is None:
+                value = "no response"
+            else:
+                value = f"{position:+8.4f} rad ({math.degrees(position):+8.2f} deg)"
+            print(f"  {motor_id:>3}  {joint_name(motor_id):<18}  {value:>26}")
+    finally:
+        bus.shutdown()
+
+
+def read_all_channels(channels, interface, host_id, timeout):
+    for channel in channels:
+        read_channel(channel, interface, host_id, CHANNEL_MOTOR_IDS[channel], timeout)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="리스트에 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.")
-    parser.add_argument("--ids", type=lambda v: int(v, 0), nargs="+", default=None,
-                        help="MOTOR_IDS 리스트 대신 사용할 모터 ID들 (예: --ids 6 7 8)")
-    parser.add_argument("--channel", default=DEFAULT_CHANNEL, help="CAN 채널, 기본값: can0")
+        description="채널별로 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.")
+    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS.keys()),
+                        choices=list(CHANNEL_MOTOR_IDS.keys()),
+                        help=f"확인할 CAN 채널들, 기본값: {' '.join(CHANNEL_MOTOR_IDS.keys())}")
     parser.add_argument("--interface", default=DEFAULT_INTERFACE,
                         help="python-can 인터페이스, 기본값: socketcan")
     parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID,
@@ -113,24 +125,20 @@ def parse_args():
 
 def main():
     args = parse_args()
-    motor_ids = args.ids if args.ids is not None else MOTOR_IDS
 
-    bus = can.Bus(channel=args.channel, interface=args.interface)
     try:
         if not args.watch:
-            read_all(bus, args.host_id, motor_ids, args.timeout)
+            read_all_channels(args.channels, args.interface, args.host_id, args.timeout)
             return
 
         print("Ctrl-C 로 종료.\n")
         while True:
-            print(f"[{time.strftime('%H:%M:%S')}]  channel={args.channel}")
-            read_all(bus, args.host_id, motor_ids, args.timeout)
+            print(f"[{time.strftime('%H:%M:%S')}]")
+            read_all_channels(args.channels, args.interface, args.host_id, args.timeout)
             print()
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass
-    finally:
-        bus.shutdown()
 
 
 if __name__ == "__main__":
