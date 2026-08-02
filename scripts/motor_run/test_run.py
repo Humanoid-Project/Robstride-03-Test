@@ -2,6 +2,10 @@
 """지정한 모터들을 현재 위치에서 목표각까지 아주 천천히 이동시킨 뒤,
 코드가 종료(Ctrl-C)될 때까지 그 자리를 능동적으로 유지한다.
 
+모터 ID 1~12 는 채널별로 나뉘어 있다 (check_id.py / read_joint_values.py 와 동일):
+    can0 : ID 1~6  (왼쪽 다리)
+    can1 : ID 7~12 (오른쪽 다리)
+
 동작 순서:
   1) 각 모터의 현재 기계각을 읽는다 (응답 없으면 중단).
   2) 이동 계획을 출력하고 Enter 로 확인받는다.
@@ -14,7 +18,7 @@
 
 사용 예:
     python3 test_run.py
-    python3 test_run.py --channel can0 --yes
+    python3 test_run.py --channels can1 --yes
 """
 import argparse
 import math
@@ -25,27 +29,41 @@ import time
 import can
 
 HOST_ID = 0xFD
-DEFAULT_CHANNEL = "can0"
 DEFAULT_INTERFACE = "socketcan"
 
 RUN_MODE_INDEX = 0x7005
 OPERATION_RUN_MODE = 0
 MECH_POS_INDEX = 0x7019
 
+# ── 채널 매핑 ─────────────────────────────────────────────────────────
+# check_id.py / read_joint_values.py 와 동일한 채널-ID 구성.
+CHANNEL_ID_RANGES = {
+    "can0": range(1, 7),    # 1..6
+    "can1": range(7, 13),   # 7..12
+}
+
 # ── 설정 ────────────────────────────────────────────────────────────────
 # 모터별 목표각(rad)과 모델("rs02"/"rs03").
-#   target_rad : 이동해서 유지할 목표 기계각 (아래는 방금 읽은 값으로 채워둠)
+#   target_rad : 이동해서 유지할 목표 기계각. None 이면 "이동하지 않고 현재 위치를
+#                그대로 유지"한다 (아직 목표각을 정하지 않은 관절의 안전한 기본값).
 #   model      : kp/kd 인코딩 스케일 결정. 실제 모델로 바로잡으면 홀딩이 정확해짐.
 #                (기본 rs03 은 안전측: 실제가 rs02 여도 의도보다 약하게 적용됨)
 MOTORS = {
-    7:  {"target_rad": +1.2723, "model": "rs02"},
-    8:  {"target_rad": -1.1790, "model": "rs03"},
-    9:  {"target_rad": +0.0041, "model": "rs03"},
-    10: {"target_rad": +1.5633, "model": "rs03"},
-    11: {"target_rad": +3.2712, "model": "rs02"},
+    1:  {"target_rad": +0.5742, "model": "rs02"},  # left_hip_yaw
+    2:  {"target_rad": +0.3425, "model": "rs03"},  # left_hip_pitch
+    3:  {"target_rad": -0.3287, "model": "rs03"},  # left_hip_roll
+    4:  {"target_rad": -1.5091, "model": "rs03"},  # left_knee_pitch
+    5:  {"target_rad": -0.0007, "model": "rs02"},  # left_ankle_pitch
+    6:  {"target_rad": +2.3518, "model": "rs02"},  # left_ankle_roll
+    7:  {"target_rad": +0.9146, "model": "rs02"},  # right_hip_yaw
+    8:  {"target_rad": +0.2708, "model": "rs03"},  # right_hip_pitch
+    9:  {"target_rad": +0.3149, "model": "rs03"},  # right_hip_roll
+    10: {"target_rad": +1.3453, "model": "rs03"},  # right_knee_pitch
+    11: {"target_rad": +3.2713, "model": "rs02"},  # right_ankle_pitch
+    12: {"target_rad": +0.0572, "model": "rs02"},  # right_ankle_roll
 }
 
-MOVE_SPEED = 0.25        # rad/s, 이동 속도 (작을수록 느림)
+MOVE_SPEED = 0.4        # rad/s, 이동 속도 (작을수록 느림)
 MIN_MOVE_TIME = 3.0      # s, 최소 이동 시간
 RATE = 100.0            # Hz, 제어 주기
 HOLD_KP = 40.0           # 위치 유지 강성 (처지면 키우고, 급격히 키우지 말 것)
@@ -59,6 +77,13 @@ JOINT_MAP = {
     7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll",
     10: "right_knee_pitch", 11: "right_ankle_pitch", 12: "right_ankle_roll",
 }
+
+
+def channel_for_id(motor_id):
+    for channel, id_range in CHANNEL_ID_RANGES.items():
+        if motor_id in id_range:
+            return channel
+    raise ValueError(f"모터 ID {motor_id} 에 대한 채널을 찾을 수 없습니다 (CHANNEL_ID_RANGES 확인).")
 
 
 class MotorSpec:
@@ -188,41 +213,61 @@ def fmt(rad):
 def main():
     parser = argparse.ArgumentParser(
         description="모터들을 목표각으로 천천히 이동시킨 뒤 종료 시까지 위치를 유지한다.")
-    parser.add_argument("--channel", default=DEFAULT_CHANNEL, help="CAN 채널, 기본값: can0")
+    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_ID_RANGES.keys()),
+                        choices=list(CHANNEL_ID_RANGES.keys()),
+                        help=f"사용할 CAN 채널들, 기본값: {' '.join(CHANNEL_ID_RANGES.keys())}")
     parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can 인터페이스")
     parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="호스트 CAN ID")
     parser.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 바로 시작")
     args = parser.parse_args()
 
-    bus = can.Bus(channel=args.channel, interface=args.interface)
+    active_motor_ids = [mid for mid in MOTORS if channel_for_id(mid) in args.channels]
+    if not active_motor_ids:
+        print("선택된 채널에 해당하는 모터가 MOTORS 설정에 없습니다.")
+        return 1
+
+    buses = {}
     motors = {}
     try:
-        # 1) 각 모터의 목표각을 스펙 범위로 클램프하고 spec 준비
-        for motor_id, cfg in MOTORS.items():
+        # 0) 필요한 채널만 연결
+        needed_channels = sorted({channel_for_id(mid) for mid in active_motor_ids})
+        for channel in needed_channels:
+            buses[channel] = can.Bus(channel=channel, interface=args.interface)
+
+        # 1) 각 모터의 목표각을 스펙 범위로 클램프하고 spec 준비 (target_rad=None 은 나중에 현재값으로 채움)
+        for motor_id in active_motor_ids:
+            cfg = MOTORS[motor_id]
             spec = SPECS[cfg["model"]]
+            bus = buses[channel_for_id(motor_id)]
             motors[motor_id] = {
                 "motor": Motor(bus, motor_id, spec, host_id=args.host_id),
-                "target": clamp(cfg["target_rad"], spec.p_min, spec.p_max),
+                "target_cfg": cfg["target_rad"],
+                "target": None,
                 "start": None,
             }
 
         # 2) 현재 위치 읽기
-        print(f"채널 {args.channel} 에서 현재 위치 확인 중...\n")
-        print(f"{'ID':>3}  {'joint':<18}  {'model':<5}  {'현재각':>26}  {'목표각':>26}")
-        print("-" * 96)
+        print(f"채널 {', '.join(needed_channels)} 에서 현재 위치 확인 중...\n")
+        print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'model':<5}  {'현재각':>26}  {'목표각':>26}")
+        print("-" * 104)
         move_time = MIN_MOVE_TIME
         for motor_id, m in motors.items():
             current = m["motor"].read_mech_position(timeout=0.3)
+            channel = channel_for_id(motor_id)
             if current is None:
-                print(f"{motor_id:>3}  {JOINT_MAP.get(motor_id, '?'):<18}  "
+                print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  "
                       f"{m['motor'].spec.name:<5}  {'무응답':>26}")
                 print(f"\n오류: 모터 ID {motor_id} 가 응답하지 않음. 배선/ID/전원을 확인하세요. 중단합니다.")
                 return 1
             m["start"] = current
+            # target_rad 가 None 이면 현재 위치를 그대로 목표로 사용 (이동 없이 유지만 함)
+            target = current if m["target_cfg"] is None else m["target_cfg"]
+            m["target"] = clamp(target, m["motor"].spec.p_min, m["motor"].spec.p_max)
             travel = abs(m["target"] - current)
             move_time = max(move_time, travel / MOVE_SPEED)
-            print(f"{motor_id:>3}  {JOINT_MAP.get(motor_id, '?'):<18}  "
-                  f"{m['motor'].spec.name:<5}  {fmt(current):>26}  {fmt(m['target']):>26}")
+            note = "" if m["target_cfg"] is not None else "  (목표 미설정: 현재 위치 유지)"
+            print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  "
+                  f"{m['motor'].spec.name:<5}  {fmt(current):>26}  {fmt(m['target']):>26}{note}")
 
         print(f"\n이동 시간: 약 {move_time:.1f} 초 (속도 {MOVE_SPEED} rad/s), "
               f"유지 강성 kp={HOLD_KP}, kd={HOLD_KD}")
@@ -330,7 +375,8 @@ def main():
                 m["motor"].stop()
             except can.CanError:
                 pass
-        bus.shutdown()
+        for bus in buses.values():
+            bus.shutdown()
         print("정지 완료.")
     return 0
 
