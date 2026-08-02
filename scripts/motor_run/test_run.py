@@ -20,18 +20,18 @@ CHANNEL_ID_RANGES = {
 }
 
 MOTORS = {
-    1:  {"target_rad": +0.5742, "model": "rs02"},
-    2:  {"target_rad": +0.3425, "model": "rs03"},
-    3:  {"target_rad": -0.3287, "model": "rs03"},
-    4:  {"target_rad": -1.5091, "model": "rs03"},
-    5:  {"target_rad": -0.0007, "model": "rs02"},
-    6:  {"target_rad": +2.3518, "model": "rs02"},
-    7:  {"target_rad": +0.9146, "model": "rs02"},
-    8:  {"target_rad": +0.2708, "model": "rs03"},
-    9:  {"target_rad": +0.3149, "model": "rs03"},
-    10: {"target_rad": +1.3453, "model": "rs03"},
-    11: {"target_rad": +3.2713, "model": "rs02"},
-    12: {"target_rad": +0.0572, "model": "rs02"},
+    1:  {"target_rad": +0.0119, "model": "rs02"},
+    2:  {"target_rad": +0.4013, "model": "rs03"},
+    3:  {"target_rad": -0.1473, "model": "rs03"},
+    4:  {"target_rad": -0.5475, "model": "rs03"},
+    5:  {"target_rad": +0.0000, "model": "rs02"},
+    6:  {"target_rad": +0.0000, "model": "rs02"},
+    7:  {"target_rad": +0.0016, "model": "rs02"},
+    8:  {"target_rad": -0.6227, "model": "rs03"},
+    9:  {"target_rad": +0.0114, "model": "rs03"},
+    10: {"target_rad": +0.7454, "model": "rs03"},
+    11: {"target_rad": +0.0000, "model": "rs02"},
+    12: {"target_rad": +0.0001, "model": "rs02"},
 }
 
 MOVE_SPEED = 0.4
