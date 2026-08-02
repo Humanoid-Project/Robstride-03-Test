@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""지정한 모터들을 현재 위치에서 목표각까지 아주 천천히 이동시킨 뒤,
-코드가 종료(Ctrl-C)될 때까지 그 자리를 능동적으로 유지한다.
-
-모터 ID 1~12 는 채널별로 나뉘어 있다 (check_id.py / read_joint_values.py 와 동일):
-    can0 : ID 1~6  (왼쪽 다리)
-    can1 : ID 7~12 (오른쪽 다리)
-
-동작 순서:
-  1) 각 모터의 현재 기계각을 읽는다 (응답 없으면 중단).
-  2) 이동 계획을 출력하고 Enter 로 확인받는다.
-  3) 각 모터를 enable(운영 모드) 한다.
-  4) 현재각 -> 목표각을 smoothstep 궤적으로 "천천히" 이동한다.
-  5) Ctrl-C 를 누를 때까지 목표각을 계속 유지한다.
-  6) 종료 시 각 모터를 정지(disable)한다.
-
-⚠️  실제 모터가 움직인다. 주변을 정리하고, 비상시 즉시 전원을 차단할 수 있게 한 뒤 실행할 것.
-
-사용 예:
-    python3 test_run.py
-    python3 test_run.py --channels can1 --yes
-"""
 import argparse
 import math
 import struct
@@ -35,41 +14,32 @@ RUN_MODE_INDEX = 0x7005
 OPERATION_RUN_MODE = 0
 MECH_POS_INDEX = 0x7019
 
-# ── 채널 매핑 ─────────────────────────────────────────────────────────
-# check_id.py / read_joint_values.py 와 동일한 채널-ID 구성.
 CHANNEL_ID_RANGES = {
-    "can0": range(1, 7),    # 1..6
-    "can1": range(7, 13),   # 7..12
+    "can0": range(1, 7),
+    "can1": range(7, 13),
 }
 
-# ── 설정 ────────────────────────────────────────────────────────────────
-# 모터별 목표각(rad)과 모델("rs02"/"rs03").
-#   target_rad : 이동해서 유지할 목표 기계각. None 이면 "이동하지 않고 현재 위치를
-#                그대로 유지"한다 (아직 목표각을 정하지 않은 관절의 안전한 기본값).
-#   model      : kp/kd 인코딩 스케일 결정. 실제 모델로 바로잡으면 홀딩이 정확해짐.
-#                (기본 rs03 은 안전측: 실제가 rs02 여도 의도보다 약하게 적용됨)
 MOTORS = {
-    1:  {"target_rad": +0.5742, "model": "rs02"},  # left_hip_yaw
-    2:  {"target_rad": +0.3425, "model": "rs03"},  # left_hip_pitch
-    3:  {"target_rad": -0.3287, "model": "rs03"},  # left_hip_roll
-    4:  {"target_rad": -1.5091, "model": "rs03"},  # left_knee_pitch
-    5:  {"target_rad": -0.0007, "model": "rs02"},  # left_ankle_pitch
-    6:  {"target_rad": +2.3518, "model": "rs02"},  # left_ankle_roll
-    7:  {"target_rad": +0.9146, "model": "rs02"},  # right_hip_yaw
-    8:  {"target_rad": +0.2708, "model": "rs03"},  # right_hip_pitch
-    9:  {"target_rad": +0.3149, "model": "rs03"},  # right_hip_roll
-    10: {"target_rad": +1.3453, "model": "rs03"},  # right_knee_pitch
-    11: {"target_rad": +3.2713, "model": "rs02"},  # right_ankle_pitch
-    12: {"target_rad": +0.0572, "model": "rs02"},  # right_ankle_roll
+    1:  {"target_rad": +0.5742, "model": "rs02"},
+    2:  {"target_rad": +0.3425, "model": "rs03"},
+    3:  {"target_rad": -0.3287, "model": "rs03"},
+    4:  {"target_rad": -1.5091, "model": "rs03"},
+    5:  {"target_rad": -0.0007, "model": "rs02"},
+    6:  {"target_rad": +2.3518, "model": "rs02"},
+    7:  {"target_rad": +0.9146, "model": "rs02"},
+    8:  {"target_rad": +0.2708, "model": "rs03"},
+    9:  {"target_rad": +0.3149, "model": "rs03"},
+    10: {"target_rad": +1.3453, "model": "rs03"},
+    11: {"target_rad": +3.2713, "model": "rs02"},
+    12: {"target_rad": +0.0572, "model": "rs02"},
 }
 
-MOVE_SPEED = 0.4        # rad/s, 이동 속도 (작을수록 느림)
-MIN_MOVE_TIME = 3.0      # s, 최소 이동 시간
-RATE = 100.0            # Hz, 제어 주기
-HOLD_KP = 40.0           # 위치 유지 강성 (처지면 키우고, 급격히 키우지 말 것)
-HOLD_KD = 2.0            # 감쇠 (kp 올릴 때 같이 올려 진동 억제)
-OVERSPEED_STOP = 2.0     # rad/s, 이 속도 초과 피드백이 오면 전체 비상정지
-# ────────────────────────────────────────────────────────────────────────
+MOVE_SPEED = 0.4
+MIN_MOVE_TIME = 3.0
+RATE = 100.0
+HOLD_KP = 40.0
+HOLD_KD = 2.0
+OVERSPEED_STOP = 2.0
 
 JOINT_MAP = {
     1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
@@ -184,7 +154,6 @@ class Motor:
         self._send(0x01, data16, data)
 
     def drain_feedback(self):
-        """대기 중인 피드백(0x02)을 비우고, 위치/속도/토크/온도를 갱신한다."""
         s = self.spec
         while True:
             msg = self.bus.recv(timeout=0.0)
@@ -229,12 +198,10 @@ def main():
     buses = {}
     motors = {}
     try:
-        # 0) 필요한 채널만 연결
         needed_channels = sorted({channel_for_id(mid) for mid in active_motor_ids})
         for channel in needed_channels:
             buses[channel] = can.Bus(channel=channel, interface=args.interface)
 
-        # 1) 각 모터의 목표각을 스펙 범위로 클램프하고 spec 준비 (target_rad=None 은 나중에 현재값으로 채움)
         for motor_id in active_motor_ids:
             cfg = MOTORS[motor_id]
             spec = SPECS[cfg["model"]]
@@ -246,7 +213,6 @@ def main():
                 "start": None,
             }
 
-        # 2) 현재 위치 읽기
         print(f"채널 {', '.join(needed_channels)} 에서 현재 위치 확인 중...\n")
         print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'model':<5}  {'현재각':>26}  {'목표각':>26}")
         print("-" * 104)
@@ -260,7 +226,6 @@ def main():
                 print(f"\n오류: 모터 ID {motor_id} 가 응답하지 않음. 배선/ID/전원을 확인하세요. 중단합니다.")
                 return 1
             m["start"] = current
-            # target_rad 가 None 이면 현재 위치를 그대로 목표로 사용 (이동 없이 유지만 함)
             target = current if m["target_cfg"] is None else m["target_cfg"]
             m["target"] = clamp(target, m["motor"].spec.p_min, m["motor"].spec.p_max)
             travel = abs(m["target"] - current)
@@ -272,7 +237,6 @@ def main():
         print(f"\n이동 시간: 약 {move_time:.1f} 초 (속도 {MOVE_SPEED} rad/s), "
               f"유지 강성 kp={HOLD_KP}, kd={HOLD_KD}")
 
-        # 3) 확인
         if not args.yes:
             if not sys.stdin.isatty():
                 print("확인 입력이 필요합니다. --yes 로 실행하거나 대화형 터미널에서 실행하세요.")
@@ -284,7 +248,6 @@ def main():
                 print("\n취소됨.")
                 return 0
 
-        # 4) enable 후 현재 위치로 첫 홀딩 명령 (급점프 방지)
         print("\nEnable 중...")
         for m in motors.values():
             m["motor"].write_run_mode_operation()
@@ -303,7 +266,6 @@ def main():
                 except can.CanError:
                     pass
 
-        # 5) 천천히 이동 (smoothstep)
         print(f"이동 시작 ({move_time:.1f}s)...")
         start_time = time.monotonic()
         while True:
@@ -329,7 +291,6 @@ def main():
             if sleep > 0:
                 time.sleep(sleep)
 
-        # 6) 종료(Ctrl-C)까지 위치 유지
         print("\n목표 위치 도달. 이제 위치를 유지합니다. 종료하려면 Ctrl-C.\n")
         last_print = 0.0
         while True:

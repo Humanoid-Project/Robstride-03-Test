@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""데이지 체인으로 연결된 Robstride 모터의 ID를 탐색해 출력한다.
-
-모터를 구동하지 않고, 각 ID로 장치 정보(get device ID, comm type 0x00)를
-요청해 응답하는 모터만 목록으로 출력한다.
-
-채널마다 탐색할 ID 범위가 다르면 아래 CHANNEL_ID_RANGES 를 편집하면 된다.
-
-사용 예:
-    python3 check_id.py                   # can0: 1..6, can1: 7..12 확인
-    python3 check_id.py --channels can0   # can0 만 확인
-"""
 import argparse
 import time
 
@@ -18,12 +7,10 @@ import can
 HOST_ID = 0xFD
 DEFAULT_INTERFACE = "socketcan"
 
-# ── 여기를 편집하세요: 채널별로 탐색할 모터 ID 범위 ───────────────
 CHANNEL_ID_RANGES = {
-    "can0": range(1, 7),    # 1..6
-    "can1": range(7, 13),   # 7..12
+    "can0": range(1, 7),
+    "can1": range(7, 13),
 }
-# ──────────────────────────────────────────────────────────────
 
 
 def build_arb(comm_type, data16, target_id):
@@ -38,18 +25,10 @@ def parse_arb(arbitration_id):
 
 
 def get_device_id(bus, host_id, target_id, timeout=0.2):
-    """comm type 0x00 (get device ID) 요청. 응답 시 (motor_id, uid) 반환.
-
-    Robstride 의 device-ID 응답 arbitration ID 는
-    0x00 | (motor_id << 8) | 0xFE 형식이라, 끝 바이트가 호스트 ID 가 아니라
-    0xFE 로 돌아온다. 모터 ID 는 data16 필드에 실려 온다.
-    """
     arb = build_arb(0x00, host_id, target_id)
     try:
         bus.send(can.Message(arbitration_id=arb, data=bytes(8), is_extended_id=True))
     except can.CanError:
-        # "Transmit buffer full" 등: 버스에서 아무도 ACK 하지 않으면 전송 프레임이
-        # 계속 재전송되며 쌓인다. 버스에 통신 가능한 노드가 없다는 신호.
         time.sleep(0.05)
         return None
     deadline = time.monotonic() + timeout
@@ -58,8 +37,6 @@ def get_device_id(bus, host_id, target_id, timeout=0.2):
         if msg is None or not msg.is_extended_id:
             continue
         comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        # 응답의 data16 하위 바이트가 우리가 물은 target_id 와 같으면 그 모터의 응답.
-        # (우리가 보낸 프레임의 echo 는 data16 하위 바이트가 host_id 라 걸러진다.)
         if comm_type == 0x00 and (data16 & 0xFF) == target_id:
             motor_id = data16 & 0xFF
             uid = bytes(msg.data)

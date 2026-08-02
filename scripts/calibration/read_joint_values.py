@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""채널별로 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.
-
-아래 CHANNEL_MOTOR_IDS 를 편집해서 채널별로 읽고 싶은 모터 ID를 지정하면 된다.
-(명령줄에서 --channels 로 확인할 채널을 제한할 수 있다.)
-
-사용 예:
-    python3 read_joint_values.py                  # can0: 1~6, can1: 7~12 모두 출력
-    python3 read_joint_values.py --channels can0   # can0 만 출력
-    python3 read_joint_values.py --watch           # 0.5초마다 반복 출력 (Ctrl-C 종료)
-"""
 import argparse
 import math
 import struct
@@ -20,12 +10,10 @@ HOST_ID = 0xFD
 DEFAULT_INTERFACE = "socketcan"
 MECH_POS_INDEX = 0x7019
 
-# ── 여기를 편집하세요: 채널별로 관절값을 읽을 모터 ID 목록 ───────────
 CHANNEL_MOTOR_IDS = {
     "can0": [1, 2, 3, 4, 5, 6],
     "can1": [7, 8, 9, 10, 11, 12],
 }
-# ──────────────────────────────────────────────────────────────
 
 JOINT_MAP = {
     1:  "left_hip_yaw",
@@ -55,7 +43,6 @@ def parse_arb(arbitration_id):
 
 
 def read_mech_position(bus, host_id, motor_id, timeout=0.1):
-    """모터의 현재 기계각(rad)을 읽는다. 응답 없으면 None."""
     data = bytearray(8)
     struct.pack_into("<H", data, 0, MECH_POS_INDEX)
     bus.send(can.Message(arbitration_id=build_arb(0x11, host_id, motor_id),
