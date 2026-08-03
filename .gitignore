@@ -4,6 +4,11 @@
 __pycache__/
 *.pyc
 
+scripts/motor_imu_test/build/
+scripts/motor_imu_test/n100_cpp/build/
+*.so
+*.a
+
 .agents/
 .codex/
 .claude/
