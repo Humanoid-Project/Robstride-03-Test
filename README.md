@@ -28,8 +28,8 @@ sudo ip link set can1 txqueuelen 1000
 ```bash
 cd scripts/motor_run/
 
-python3 motor_run.py
-python3 daisy_chain_run.py
+python3 one_motor_run_gui.py
+python3 two_motor_run_gui.py
 ```
 
 ### 2. motor_id
@@ -56,7 +56,8 @@ python3 motor_calibration.py --motor-id {ID}
 ```bash
 cd scripts/zero_position/
 
-python3 set_zero_position.py --motor-id {ID}
-python3 set_zero_position.py --motor-id {ID} --verify
-python3 set_zero_position.py --motor-id {ID} --zero-sta 1
+python3 set_zero_position.py
+python3 set_zero_position.py --channels can0
+python3 set_zero_position.py --save
+python3 set_zero_position.py --zero-sta 1
 ```

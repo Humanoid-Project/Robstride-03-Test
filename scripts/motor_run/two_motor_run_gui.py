@@ -2,8 +2,8 @@
 import argparse
 import tkinter as tk
 
-import motor_run as mr
-from motor_run import MotorRunApp, RS02_SPEC, RS03_SPEC
+import one_motor_run_gui as mr
+from one_motor_run_gui import MotorRunApp, RS02_SPEC, RS03_SPEC
 
 def _spec_for(model):
     return RS02_SPEC if model == "rs02" else RS03_SPEC
