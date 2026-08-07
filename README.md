@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/Humanoid-Project/Robstride-03-Test.git
+git clone https://github.com/Humanoid-Project/Robstride-Motor-Test.git
 cd Robstride-03-Test
 python3 -m venv .venv
 source .venv/bin/activate
