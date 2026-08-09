@@ -43,9 +43,9 @@ OVERSPEED_STOP = 2.0
 
 JOINT_MAP = {
     1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
-    4: "left_knee_pitch", 5: "left_ankle_pitch", 6: "left_ankle_roll",
+    4: "left_knee_pitch", 5: "left_ankle_upper", 6: "left_ankle_lower",
     7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll",
-    10: "right_knee_pitch", 11: "right_ankle_pitch", 12: "right_ankle_roll",
+    10: "right_knee_pitch", 11: "right_ankle_upper", 12: "right_ankle_lower",
 }
 
 

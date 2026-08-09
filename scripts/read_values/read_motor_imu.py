@@ -15,9 +15,9 @@ PRINT_HZ = 10
 CHANNEL_MOTOR_IDS = {"can0": [1, 2, 3, 4, 5, 6], "can1": [7, 8, 9, 10, 11, 12]}
 JOINT_MAP = {
     1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
-    4: "left_knee_pitch", 5: "left_ankle_pitch", 6: "left_ankle_roll",
+    4: "left_knee_pitch", 5: "left_ankle_upper", 6: "left_ankle_lower",
     7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll",
-    10: "right_knee_pitch", 11: "right_ankle_pitch", 12: "right_ankle_roll",
+    10: "right_knee_pitch", 11: "right_ankle_upper", 12: "right_ankle_lower",
 }
 
 parser = argparse.ArgumentParser(description="모터 pos/vel + IMU 값 실시간 출력")

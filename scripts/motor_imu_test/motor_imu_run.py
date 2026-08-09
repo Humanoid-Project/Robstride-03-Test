@@ -46,14 +46,14 @@ MOTIONS = {
             2: +0.3979,   # left_hip_pitch
             3: -0.0318,   # left_hip_roll
             4: -0.5482,   # left_knee_pitch
-            5: -0.0001,   # left_ankle_pitch
-            6: +0.0000,   # left_ankle_roll
+            5: -0.0001,   # left_ankle_upper
+            6: +0.0000,   # left_ankle_lower
             7: -0.0398,   # right_hip_yaw
             8: +0.0188,   # right_hip_pitch
             9: +0.0629,   # right_hip_roll
             10: +0.0000,  # right_knee_pitch
-            11: -0.0000,  # right_ankle_pitch
-            12: -0.0000,  # right_ankle_roll
+            11: -0.0000,  # right_ankle_upper
+            12: -0.0000,  # right_ankle_lower
         },
     },
     -1: {
@@ -63,14 +63,14 @@ MOTIONS = {
             2: -0.0601,   # left_hip_pitch
             3: +0.0105,   # left_hip_roll
             4: +0.0177,   # left_knee_pitch
-            5: +0.0000,   # left_ankle_pitch
-            6: -0.0000,   # left_ankle_roll
+            5: +0.0000,   # left_ankle_upper
+            6: -0.0000,   # left_ankle_lower
             7: +0.0940,   # right_hip_yaw
             8: -0.4013,   # right_hip_pitch
             9: +0.0706,   # right_hip_roll
             10: +0.5172,  # right_knee_pitch
-            11: -0.0001,  # right_ankle_pitch
-            12: -0.0000,  # right_ankle_roll
+            11: -0.0001,  # right_ankle_upper
+            12: -0.0000,  # right_ankle_lower
         },
     },
 }
@@ -101,9 +101,9 @@ MOTOR_MODELS = {
 
 JOINT_MAP = {
     1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
-    4: "left_knee_pitch", 5: "left_ankle_pitch", 6: "left_ankle_roll",
+    4: "left_knee_pitch", 5: "left_ankle_upper", 6: "left_ankle_lower",
     7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll",
-    10: "right_knee_pitch", 11: "right_ankle_pitch", 12: "right_ankle_roll",
+    10: "right_knee_pitch", 11: "right_ankle_upper", 12: "right_ankle_lower",
 }
 
 CHANNEL_ID_RANGES = {
