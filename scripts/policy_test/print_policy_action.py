@@ -15,21 +15,34 @@ l_knee, l_ankle_roll, l_ankle_pitch, r_hip_yaw, r_hip_pitch, r_hip_roll, r_knee,
 r_ankle_roll, r_ankle_pitch. default_joint_pos/vel 는 전부 0 이므로 *_rel 은
 그냥 현재 값과 같다.
 
-## ⚠ 발목 4개는 근사치다 (알려진 gap, 지어낸 값이 아님)
+## ⚠ 무릎·발목 6개는 근사치다 (알려진 gap, 지어낸 값이 아님)
 
-시뮬레이터의 l/r_ankle_roll_joint, l/r_ankle_pitch_joint 는 출력축 값인데,
-실물은 그 두 값을 차동(differential)으로 만들어내는 모터 2개(upper/lower,
-CAN ID 5·6·11·12)뿐이고 둘 다 순수한 roll도 pitch도 아니다
-(robonex_description/scripts/robonex_serial.py 주석: "each ankle motor
-~1.0 into roll and pitch" — 모터 하나가 두 출력축에 같이 걸린다). 이걸 정확히
-변환하려면 크랭크 기구학이 필요한데, project-unmeasured-params 메모 기준
-**이 변환은 아직 유도되지 않았다** (크랭크 각도범위조차 URDF 플레이스홀더).
+시뮬레이터의 l/r_knee_joint, l/r_ankle_roll_joint, l/r_ankle_pitch_joint 는
+전부 "정강이/출력축" 값인데, CAN 모터가 실제로 재는 건 그 축이 아니다:
 
-그래서 이 스크립트는 발목 roll/pitch 관측 슬롯 4개를 실제 모터값으로 채우지
+- **무릎**: CAN 모터(ID4·10)는 4절링크의 **크랭크** 축을 잰다. 크랭크와
+  정강이(l_knee_joint)는 1입력→1출력이라 관계 자체는 있지만(중립에서 비율
+  0.705, 전체 구간 0.21~1.23로 비선형), 크랭크 각도를 그대로 정강이 각도로
+  써도 되는 게 아니다 — `robonex_description/scripts/robonex_serial.py`의
+  `SERIAL_GAINS` 계산(`k_joint = MOTOR_KP / r^2`)이 그 증거: 게인에 r^2을
+  곱해 변환한다는 것 자체가 두 각도가 다른 값이라는 뜻이다.
+- **발목**: CAN 모터 4개(upper/lower, ID5·6·11·12)가 만드는 건 차동
+  (differential)이라 둘 다 순수한 roll도 pitch도 아니다
+  (`robonex_serial.py` 주석: "each ankle motor ~1.0 into roll and pitch" —
+  모터 하나가 두 출력축에 같이 걸린다).
+
+두 경우 다 정확히 변환하려면 크랭크/차동 기구학(CAD 링크 길이 기반)이
+필요한데, project-unmeasured-params 메모 기준 **이 변환은 아직 유도되지
+않았다**(무릎 링크 길이도 코드에 없고, 발목 크랭크 각도범위조차 URDF
+플레이스홀더). 무릎은 원리상 어렵지 않은 문제(닫힌형 해 존재)지만, 링크
+길이를 CAD에서 뽑아오기 전까지는 "쉬운 문제"와 "이미 푼 문제"는 다르다.
+
+그래서 이 스크립트는 무릎·발목 관측 슬롯 6개를 실제 모터값으로 채우지
 않고 0.0 으로 둔다. 틀린 근사치를 그럴듯하게 보여주는 것보다, 모른다는 걸
-분명히 하는 쪽을 선택했다. 발목 모터 원시값은 참고용으로 별도 표시한다.
-마찬가지 이유로 정책이 내놓는 발목 action 도 "출력축 목표각(가상)"일 뿐, 실제
-모터 명령으로 바꿀 방법이 아직 없다 — 절대 그대로 CAN 에 실어 보내지 말 것.
+분명히 하는 쪽을 선택했다. 크랭크 모터 원시값은 참고용으로 별도 표시한다.
+마찬가지 이유로 정책이 내놓는 무릎·발목 action 도 "출력축 목표각(가상)"일
+뿐, 실제 모터 명령으로 바꿀 방법이 아직 없다 — 절대 그대로 CAN 에 실어
+보내지 말 것.
 
 ## 각속도: raw 를 쓴다
 
@@ -79,17 +92,19 @@ JOINT_ORDER = [
     "r_hip_yaw", "r_hip_pitch", "r_hip_roll", "r_knee", "r_ankle_roll", "r_ankle_pitch",
 ]
 
-# 이 8개는 CAN 모터 하나가 그 관절 그대로다 (hw-canbus.md 매핑표 확인).
+# 이 6개(힙만)는 직결이라 CAN 모터 하나가 그 관절 그대로다 (hw-canbus.md
+# 매핑표 확인). 무릎은 크랭크를 거치므로 여기 넣지 않는다 - 위 docstring 참고.
 DIRECT_JOINT_TO_MOTOR = {
-    "l_hip_yaw": 1, "l_hip_pitch": 2, "l_hip_roll": 3, "l_knee": 4,
-    "r_hip_yaw": 7, "r_hip_pitch": 8, "r_hip_roll": 9, "r_knee": 10,
+    "l_hip_yaw": 1, "l_hip_pitch": 2, "l_hip_roll": 3,
+    "r_hip_yaw": 7, "r_hip_pitch": 8, "r_hip_roll": 9,
 }
-# 이 4개는 모터 하나가 곧 관절이 아니라서(위 docstring 참고) 관측에 0.0 을 쓴다.
-ANKLE_APPROX_JOINTS = {"l_ankle_roll", "l_ankle_pitch", "r_ankle_roll", "r_ankle_pitch"}
+# 이 6개(무릎 2 + 발목 4)는 모터 값이 곧 관절 값이 아니라서(위 docstring
+# 참고) 관측에 0.0 을 쓴다.
+APPROX_JOINTS = {"l_knee", "r_knee", "l_ankle_roll", "l_ankle_pitch", "r_ankle_roll", "r_ankle_pitch"}
 
-# 발목 모터는 참고 표시용으로만 읽는다. (motor_id, label)
-ANKLE_MOTORS = [(5, "left_ankle_upper"), (6, "left_ankle_lower"),
-               (11, "right_ankle_upper"), (12, "right_ankle_lower")]
+# 크랭크 모터(무릎 2 + 발목 4)는 참고 표시용으로만 읽는다. (motor_id, label)
+CRANK_REFERENCE_MOTORS = [(4, "left_knee_pitch"), (5, "left_ankle_upper"), (6, "left_ankle_lower"),
+                          (10, "right_knee_pitch"), (11, "right_ankle_upper"), (12, "right_ankle_lower")]
 
 # actions.joint_pos.scale (env.yaml). offset 0, use_default_offset 이지만
 # default_joint_pos 가 0 이라 target = scale * raw_action 그대로다.
@@ -210,14 +225,14 @@ class CanReader(threading.Thread):
 def build_observation(snapshot, ang_vel, gravity, prev_action):
     """학습 순서 그대로 42차원 관측 벡터를 만든다.
 
-    발목 4개(ANKLE_APPROX_JOINTS)는 pos/vel 모두 0.0 — 위 docstring 참고.
+    무릎·발목 6개(APPROX_JOINTS)는 pos/vel 모두 0.0 — 위 docstring 참고.
     """
     pos = np.zeros(12, dtype=np.float32)
     vel = np.zeros(12, dtype=np.float32)
     for i, joint in enumerate(JOINT_ORDER):
         motor_id = DIRECT_JOINT_TO_MOTOR.get(joint)
         if motor_id is None:
-            continue   # 발목 근사 슬롯: 0.0 유지
+            continue   # 무릎·발목 근사 슬롯: 0.0 유지
         p, v = snapshot.get(motor_id, (None, None))
         pos[i] = p if p is not None else 0.0
         vel[i] = v if v is not None else 0.0
@@ -307,7 +322,7 @@ def main():
             can_hz = "  ".join(f"{r.channel} {r.rate_hz:5.1f} Hz" for r in readers)
             lines.append(f"정책 action 추정 (읽기 전용)   {can_hz}   (Ctrl-C 종료)\n")
 
-            lines.append("직접 매핑 관절 (8개, CAN 모터 = 관절)")
+            lines.append("직접 매핑 관절 (6개, CAN 모터 = 관절, 힙만)")
             lines.append(f"  {'관절':<14}  {'ID':>3}  {'pos [rad]':>10}  {'vel [rad/s]':>12}")
             for joint in JOINT_ORDER:
                 motor_id = DIRECT_JOINT_TO_MOTOR.get(joint)
@@ -318,8 +333,8 @@ def main():
                 vv = f"{v:+12.4f}" if v is not None else f"{'--':>12}"
                 lines.append(f"  {joint:<14}  {motor_id:>3}  {pv}  {vv}")
 
-            lines.append("\n발목 모터 원시값 (참고용, 관측에는 포함되지 않음 — 위 docstring)")
-            for motor_id, label in ANKLE_MOTORS:
+            lines.append("\n크랭크 모터 원시값 (무릎+발목, 참고용, 관측에는 포함되지 않음 — 위 docstring)")
+            for motor_id, label in CRANK_REFERENCE_MOTORS:
                 p, v = snapshot.get(motor_id, (None, None))
                 pv = f"{p:+10.4f}" if p is not None else f"{'--':>10}"
                 vv = f"{v:+12.4f}" if v is not None else f"{'--':>12}"
@@ -344,13 +359,13 @@ def main():
             lines.append(f"  {'관절':<14}  {'raw':>8}  {'목표각[rad]':>12}  {'[deg]':>8}")
             for joint, a in zip(JOINT_ORDER, action):
                 target = a * scale_of(joint)
-                tag = "  (가상, 발목 근사 미해결)" if joint in ANKLE_APPROX_JOINTS else ""
+                tag = "  (가상, 크랭크 기구학 미해결)" if joint in APPROX_JOINTS else ""
                 lines.append(f"  {joint:<14}  {a:+8.4f}  {target:+12.4f}  "
                              f"{target / DEG:+7.2f}{tag}")
 
-            lines.append("\n⚠ 발목 목표각은 출력축(roll/pitch) 기준의 정책 희망값일 뿐이다.")
-            lines.append("   upper/lower 모터 명령으로 바꾸는 변환이 아직 없으니 그대로 CAN 에")
-            lines.append("   실어 보내지 말 것 (n_ankle 4개 관절, docstring 참고).")
+            lines.append("\n⚠ 무릎·발목 목표각은 정강이/출력축(pitch·roll) 기준의 정책 희망값일 뿐이다.")
+            lines.append("   실제 크랭크/upper/lower 모터 명령으로 바꾸는 변환이 아직 없으니 그대로")
+            lines.append("   CAN 에 실어 보내지 말 것 (무릎 2 + 발목 4, docstring 참고).")
 
             if notes:
                 lines.append("")
