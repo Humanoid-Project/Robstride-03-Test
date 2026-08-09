@@ -6,6 +6,8 @@ __pycache__/
 
 scripts/motor_imu_test/build/
 scripts/motor_imu_test/n100_cpp/build/
+scripts/policy_test/build/
+scripts/policy_test/n100_cpp/build/
 *.so
 *.a
 
