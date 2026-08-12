@@ -31,7 +31,10 @@ def read_mech_position(bus, host_id, target_id, timeout=0.3):
         if msg is None or not msg.is_extended_id:
             continue
         comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        if destination == host_id and (data16 & 0xFF) == target_id:
+        payload = bytes(msg.data)
+        if (comm_type == 0x11 and destination == host_id
+                and (data16 & 0xFF) == target_id and len(payload) >= 8
+                and int.from_bytes(payload[0:2], "little") == MECH_POS_INDEX):
             return True
     return False
 
@@ -61,6 +64,17 @@ def main():
         if not answers:
             print("Aborting: the current ID does not respond. Check wiring/power/ID.")
             return
+
+        if args.new_id != args.current_id and read_mech_position(
+                bus, args.host_id, args.new_id):
+            print(f"Aborting: new ID {args.new_id} is already in use on {args.channel}.")
+            return
+
+        # 같은 CAN ID를 가진 모터가 둘 이상 붙어 있으면 둘 다 응답하고 둘 다 ID가 바뀐다.
+        # 프로토콜상 소프트웨어로는 구분할 방법이 없으므로(응답이 똑같음) 경고만 할 수 있다.
+        print(f"\nWARNING: if more than one motor currently answers to ID {args.current_id} "
+              "on this bus, ALL of them will take the new ID — the protocol gives no way to "
+              "tell them apart. Change IDs with only ONE motor connected.")
 
         if not args.yes:
             reply = input(f"Change motor ID {args.current_id} -> {args.new_id}? "

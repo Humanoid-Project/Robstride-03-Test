@@ -45,7 +45,10 @@ def read_mech_position(bus, host_id, target_id, timeout=0.3):
         if msg is None or not msg.is_extended_id:
             continue
         comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        if destination == host_id and (data16 & 0xFF) == target_id:
+        payload = bytes(msg.data)
+        if (comm_type == 0x11 and destination == host_id
+                and (data16 & 0xFF) == target_id and len(payload) >= 8
+                and int.from_bytes(payload[0:2], "little") == MECH_POS_INDEX):
             return True
     return False
 

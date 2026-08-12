@@ -40,6 +40,10 @@ RATE = 100.0
 HOLD_KP = 40.0
 HOLD_KD = 2.0
 OVERSPEED_STOP = 2.0
+# 피드백 watchdog: 이 시간 넘게 특정 모터의 type-0x02 응답이 없으면 비상정지한다.
+# 없으면 통신이 끊긴 뒤에도 마지막(오래된) 속도값으로 과속 검출을 계속하게 되어,
+# 실제로는 폭주 중인데 "정상"으로 보일 수 있다. 100Hz 루프 기준 30프레임 정도 여유.
+FEEDBACK_TIMEOUT = 0.3
 
 JOINT_MAP = {
     1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
@@ -101,6 +105,7 @@ class Motor:
         self.last_position = None
         self.last_torque = 0.0
         self.last_temp = 0.0
+        self.last_feedback_time = 0.0   # 0 = 아직 한 번도 못 받음 (watchdog이 검사)
 
     def _send(self, comm_type, data16, data):
         self.bus.send(can.Message(arbitration_id=build_arb(comm_type, data16, self.motor_id),
@@ -153,26 +158,72 @@ class Motor:
         ])
         self._send(0x01, data16, data)
 
-    def drain_feedback(self):
+    def ingest_feedback(self, data, now=None):
+        """이미 이 모터 것으로 확인된 type-0x02 페이로드를 반영한다. 수신은 FeedbackHub 담당."""
         s = self.spec
-        while True:
+        if len(data) < 8:
+            return
+        raw_pos = (data[0] << 8) | data[1]
+        raw_vel = (data[2] << 8) | data[3]
+        raw_torque = (data[4] << 8) | data[5]
+        raw_temp = (data[6] << 8) | data[7]
+        self.last_position = raw_pos / 65535.0 * (s.p_max - s.p_min) + s.p_min
+        self.last_velocity = raw_vel / 65535.0 * (s.v_max - s.v_min) + s.v_min
+        self.last_torque = raw_torque / 65535.0 * (s.t_max - s.t_min) + s.t_min
+        self.last_temp = raw_temp / 10.0
+        self.last_feedback_time = time.monotonic() if now is None else now
+
+
+class FeedbackHub:
+    """한 CAN 버스를 공유하는 모터들의 피드백을 한 곳에서 받아 ID별로 나눠준다.
+
+    ⚠ 2026-08-09에 발견한 버그의 수정: 예전에는 모터마다 각자 drain_feedback()으로 버스를
+    비웠는데, python-can 소켓은 한 번 recv된 프레임이 사라지므로 **먼저 도는 모터가 다른
+    모터의 피드백까지 꺼내서 버렸다**. 이 로봇은 채널당 모터가 6개라 사실상 대부분의 피드백이
+    유실됐고, 그 위에서 도는 과속 검출·상태 표시가 통째로 신뢰 불가였다(모의 CAN으로 재현 확인).
+    → 버스당 반드시 이 허브 한 곳에서만 recv 하고 ID로 분배할 것.
+    """
+
+    def __init__(self, bus, motors, host_id):
+        self.bus = bus
+        self.motors = {m.motor_id: m for m in motors}
+        self.host_id = host_id
+
+    def _route(self, msg, now):
+        """프레임 하나를 해당 모터에 반영하고 그 모터를 반환한다(아니면 None)."""
+        if not msg.is_extended_id:
+            return None
+        comm_type, data16, destination = parse_arb(msg.arbitration_id)
+        if comm_type != 0x02 or destination != self.host_id:
+            return None
+        motor = self.motors.get(data16 & 0xFF)
+        if motor is not None:
+            motor.ingest_feedback(bytes(msg.data), now)
+        return motor
+
+    def pump(self, max_frames=512):
+        """지금 버퍼에 있는 프레임을 모두 꺼내 해당 모터에 전달한다(논블로킹)."""
+        now = time.monotonic()
+        for _ in range(max_frames):
             msg = self.bus.recv(timeout=0.0)
             if msg is None:
                 return
-            if not msg.is_extended_id:
-                continue
-            comm_type, data16, destination = parse_arb(msg.arbitration_id)
-            if comm_type == 0x02 and destination == self.host_id and (data16 & 0xFF) == self.motor_id:
-                data = bytes(msg.data)
-                if len(data) >= 8:
-                    raw_pos = (data[0] << 8) | data[1]
-                    raw_vel = (data[2] << 8) | data[3]
-                    raw_torque = (data[4] << 8) | data[5]
-                    raw_temp = (data[6] << 8) | data[7]
-                    self.last_position = raw_pos / 65535.0 * (s.p_max - s.p_min) + s.p_min
-                    self.last_velocity = raw_vel / 65535.0 * (s.v_max - s.v_min) + s.v_min
-                    self.last_torque = raw_torque / 65535.0 * (s.t_max - s.t_min) + s.t_min
-                    self.last_temp = raw_temp / 10.0
+            self._route(msg, now)
+
+    def wait_for(self, motor_id, timeout):
+        """특정 모터의 피드백을 기다린다. 기다리는 동안 들어온 **다른 모터 프레임도 버리지 않고**
+        해당 모터에 반영한다(그게 이 허브를 만든 이유다). 반환: 그 모터의 위치 또는 None."""
+        deadline = time.monotonic() + timeout
+        target = self.motors.get(motor_id)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            msg = self.bus.recv(timeout=remaining)
+            if msg is None:
+                return None
+            if self._route(msg, time.monotonic()) is target and target is not None:
+                return target.last_position
 
 
 def fmt(rad):
@@ -213,6 +264,18 @@ def main():
                 "start": None,
             }
 
+        # 버스마다 허브 하나 — 이 채널의 모든 모터 피드백을 여기서만 받아 분배한다.
+        # (모터별로 각자 recv 하면 서로의 프레임을 먹어버린다, FeedbackHub docstring 참고)
+        hubs = {
+            channel: FeedbackHub(
+                bus,
+                [m["motor"] for mid, m in motors.items() if channel_for_id(mid) == channel],
+                args.host_id,
+            )
+            for channel, bus in buses.items()
+        }
+        hub_of = {mid: hubs[channel_for_id(mid)] for mid in motors}
+
         print(f"채널 {', '.join(needed_channels)} 에서 현재 위치 확인 중...\n")
         print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'model':<5}  {'현재각':>26}  {'목표각':>26}")
         print("-" * 104)
@@ -225,7 +288,9 @@ def main():
                       f"{m['motor'].spec.name:<5}  {'무응답':>26}")
                 print(f"\n오류: 모터 ID {motor_id} 가 응답하지 않음. 배선/ID/전원을 확인하세요. 중단합니다.")
                 return 1
-            m["start"] = current
+            # mechPos is display-only.  A missing configured target is
+            # replaced with type-0x02 feedback after enable, never with this
+            # multi-turn value.
             target = current if m["target_cfg"] is None else m["target_cfg"]
             m["target"] = clamp(target, m["motor"].spec.p_min, m["motor"].spec.p_max)
             travel = abs(m["target"] - current)
@@ -248,16 +313,6 @@ def main():
                 print("\n취소됨.")
                 return 0
 
-        print("\nEnable 중...")
-        for m in motors.values():
-            m["motor"].write_run_mode_operation()
-            time.sleep(0.005)
-            m["motor"].enable()
-            time.sleep(0.005)
-            m["motor"].control(pos=m["start"], vel=0.0, kp=HOLD_KP, kd=HOLD_KD)
-
-        period = 1.0 / RATE
-
         def emergency_stop(reason):
             print(f"\n비상정지: {reason}")
             for mm in motors.values():
@@ -265,6 +320,44 @@ def main():
                     mm["motor"].stop()
                 except can.CanError:
                     pass
+
+        print("\nEnable 중...")
+        for motor_id, m in motors.items():
+            m["motor"].write_run_mode_operation()
+            time.sleep(0.005)
+            m["motor"].enable()
+            start = hub_of[motor_id].wait_for(motor_id, timeout=0.3)
+            if start is None:
+                emergency_stop(f"ID {m['motor'].motor_id} 실시간 피드백 없음")
+                return 1
+            # Position targets with kp>0 must only use the type-0x02 feedback
+            # domain.  mechPos (0x7019) is multi-turn and can differ by 8pi.
+            m["start"] = start
+            if m["target_cfg"] is None:
+                m["target"] = start
+            m["motor"].control(pos=start, vel=0.0, kp=HOLD_KP, kd=HOLD_KD)
+
+        move_time = MIN_MOVE_TIME
+        for m in motors.values():
+            move_time = max(move_time, abs(m["target"] - m["start"]) / MOVE_SPEED)
+
+        period = 1.0 / RATE
+
+        def check_safety(now):
+            """모든 모터의 과속 + 피드백 신선도 검사. 문제 있으면 사유 문자열, 없으면 None.
+
+            피드백 신선도까지 보는 이유: 통신이 끊기면 last_velocity가 마지막(오래된) 값에
+            그대로 멈춰 있어서, 실제로는 폭주 중이어도 과속 검출이 영원히 통과한다."""
+            for mid, mm in motors.items():
+                motor = mm["motor"]
+                if abs(motor.last_velocity) > OVERSPEED_STOP:
+                    return f"ID {mid} 과속 ({motor.last_velocity:+.2f} rad/s)"
+                if motor.last_feedback_time <= 0.0:
+                    return f"ID {mid} 피드백을 한 번도 못 받음"
+                age = now - motor.last_feedback_time
+                if age > FEEDBACK_TIMEOUT:
+                    return (f"ID {mid} 피드백 끊김 ({age:.2f}s 무응답, 한계 {FEEDBACK_TIMEOUT}s)")
+            return None
 
         print(f"이동 시작 ({move_time:.1f}s)...")
         start_time = time.monotonic()
@@ -280,11 +373,12 @@ def main():
                     vel=clamp(travel * smooth_vel, -MOVE_SPEED, MOVE_SPEED),
                     kp=HOLD_KP, kd=HOLD_KD,
                 )
-                m["motor"].drain_feedback()
-                if abs(m["motor"].last_velocity) > OVERSPEED_STOP:
-                    emergency_stop(f"ID {m['motor'].motor_id} 과속 "
-                                   f"({m['motor'].last_velocity:+.2f} rad/s)")
-                    return 1
+            for hub in hubs.values():
+                hub.pump()
+            reason = check_safety(time.monotonic())
+            if reason:
+                emergency_stop(reason)
+                return 1
             if progress >= 1.0:
                 break
             sleep = period - (time.monotonic() - now)
@@ -297,11 +391,12 @@ def main():
             now = time.monotonic()
             for m in motors.values():
                 m["motor"].control(pos=m["target"], vel=0.0, kp=HOLD_KP, kd=HOLD_KD)
-                m["motor"].drain_feedback()
-                if abs(m["motor"].last_velocity) > OVERSPEED_STOP:
-                    emergency_stop(f"ID {m['motor'].motor_id} 과속 "
-                                   f"({m['motor'].last_velocity:+.2f} rad/s)")
-                    return 1
+            for hub in hubs.values():
+                hub.pump()
+            reason = check_safety(time.monotonic())
+            if reason:
+                emergency_stop(reason)
+                return 1
             if now - last_print >= 1.0:
                 last_print = now
                 print(f"[{time.strftime('%H:%M:%S')}] 위치 유지 중 "

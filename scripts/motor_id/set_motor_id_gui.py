@@ -36,16 +36,21 @@ def parse_arb(arbitration_id):
     destination = arbitration_id & 0xFF
     return comm_type, data16, destination
 
-def _await_reply(bus, host_id, target_id, comm_type, timeout):
+def _await_reply(bus, host_id, target_id, comm_type, timeout, index=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         msg = bus.recv(timeout=max(0.0, deadline - time.monotonic()))
         if msg is None or not msg.is_extended_id:
             continue
-        reply_type, data16, _destination = parse_arb(msg.arbitration_id)
+        reply_type, data16, destination = parse_arb(msg.arbitration_id)
         responder = data16 & 0xFF
-        if reply_type == comm_type and responder == target_id and responder != host_id:
-            return bytes(msg.data)
+        payload = bytes(msg.data)
+        if (reply_type == comm_type and destination == host_id
+                and responder == target_id and responder != host_id):
+            if index is not None and (len(payload) < 8
+                    or int.from_bytes(payload[0:2], "little") != index):
+                continue
+            return payload
     return None
 
 def ping(bus, host_id, target_id, timeout=0.3):
@@ -58,7 +63,8 @@ def ping(bus, host_id, target_id, timeout=0.3):
     struct.pack_into("<H", data, 0, MECH_POS_INDEX)
     bus.send(can.Message(arbitration_id=build_arb_read(host_id, target_id),
                          data=bytes(data), is_extended_id=True))
-    return _await_reply(bus, host_id, target_id, 0x11, timeout) is not None
+    return _await_reply(
+        bus, host_id, target_id, 0x11, timeout, index=MECH_POS_INDEX) is not None
 
 def send_set_id(bus, host_id, current_id, new_id):
     bus.send(can.Message(arbitration_id=build_arb_set_id(new_id, host_id, current_id),

@@ -474,15 +474,7 @@ class MotorController(threading.Thread):
             has_feedback = self.state["feedback_timestamp"] > 0.0
 
         if not has_feedback:
-            position, feedback = motor.read_float_parameter(MECH_POS_INDEX, timeout=0.05)
-            self.publish_feedback(feedback, time.monotonic(), 0.0)
-            self.publish_position_parameter(position, time.monotonic())
-            if position is not None:
-                start_position = position
-                has_feedback = True
-
-        if not has_feedback:
-            self.publish_status("Position unknown")
+            self.publish_status("Control feedback unavailable")
             return False
 
         target_position = max(self.spec.p_min, min(self.spec.p_max, target_position))
@@ -579,11 +571,6 @@ class MotorController(threading.Thread):
             home_position = self.initial_position
 
         if home_position is None:
-            home_position, feedback = motor.read_float_parameter(MECH_POS_INDEX, timeout=0.05)
-            self.publish_feedback(feedback, time.monotonic(), 0.0)
-            self.publish_initial_position(home_position)
-
-        if home_position is None:
             self.publish_status("Stopping (home unknown)")
             return
 
@@ -627,10 +614,9 @@ class MotorController(threading.Thread):
             motor = self.make_motor(bus)
             self.publish_status("Connected")
             self.event_queue.put(("status", "Connected"))
-            initial_position, feedback = motor.read_float_parameter(MECH_POS_INDEX, timeout=0.05)
-            self.publish_feedback(feedback, time.monotonic(), 0.0)
-            self.publish_position_parameter(initial_position, time.monotonic())
-            self.publish_initial_position(initial_position)
+            # mechPos is multi-turn and must never seed a kp>0 target.  The
+            # initial/home position is established only from type-0x02
+            # operation-control feedback returned by enable/control.
 
             period = 1.0 / self.args.rate
             last_time = time.monotonic()

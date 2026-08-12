@@ -25,7 +25,7 @@ parser.add_argument("--imu-port", default="/dev/ttyUSB0")
 parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS),
                     choices=list(CHANNEL_MOTOR_IDS))
 parser.add_argument("--n100-dir",
-                    default=str(Path.home() / "Robstride-03-Test/scripts/motor_imu_test"),
+                    default=str(Path(__file__).resolve().parents[1] / "motor_imu_test"),
                     help="n100*.so 가 있는 폴더")
 parser.add_argument("--no-imu", action="store_true", help="모터만 출력")
 parser.add_argument("--timeout", type=float, default=0.02, help="모터 응답 대기(초)")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""robonex_balancing 에서 학습한 정책으로 매 스텝 action 을 추정해 출력한다.
+"""closed-loop RoboNex 정책으로 매 스텝 action 을 추정해 출력한다.
 
 읽기 전용이다. 모터에 명령을 보내지 않는다 — 정책이 무엇을 원하는지만
 보여준다. 실제로 모터를 그 방향으로 움직이는 것은 이 스크립트의 범위 밖이다.
@@ -10,39 +10,13 @@
     joint_pos_rel(12) + joint_vel_rel(12) + imu_ang_vel(3) + projected_gravity(3)
     + last_action(12)  =  42
 
-관절 순서(학습 시 asset_cfg.joint_names): l_hip_yaw, l_hip_pitch, l_hip_roll,
-l_knee, l_ankle_roll, l_ankle_pitch, r_hip_yaw, r_hip_pitch, r_hip_roll, r_knee,
-r_ankle_roll, r_ankle_pitch. default_joint_pos/vel 는 전부 0 이므로 *_rel 은
-그냥 현재 값과 같다.
+관절 순서는 실물 모터축 12개와 일치한다: hip 6개, knee crank 2개,
+ankle upper/lower 4개. 따라서 폐루프의 수동 출력축을 관측/action 슬롯으로
+사용하지 않으며 CAN 엔코더 값을 별도 기구학 근사 없이 그대로 사용한다.
 
-## ⚠ 무릎·발목 6개는 근사치다 (알려진 gap, 지어낸 값이 아님)
-
-시뮬레이터의 l/r_knee_joint, l/r_ankle_roll_joint, l/r_ankle_pitch_joint 는
-전부 "정강이/출력축" 값인데, CAN 모터가 실제로 재는 건 그 축이 아니다:
-
-- **무릎**: CAN 모터(ID4·10)는 4절링크의 **크랭크** 축을 잰다. 크랭크와
-  정강이(l_knee_joint)는 1입력→1출력이라 관계 자체는 있지만(중립에서 비율
-  0.705, 전체 구간 0.21~1.23로 비선형), 크랭크 각도를 그대로 정강이 각도로
-  써도 되는 게 아니다 — `robonex_description/scripts/robonex_serial.py`의
-  `SERIAL_GAINS` 계산(`k_joint = MOTOR_KP / r^2`)이 그 증거: 게인에 r^2을
-  곱해 변환한다는 것 자체가 두 각도가 다른 값이라는 뜻이다.
-- **발목**: CAN 모터 4개(upper/lower, ID5·6·11·12)가 만드는 건 차동
-  (differential)이라 둘 다 순수한 roll도 pitch도 아니다
-  (`robonex_serial.py` 주석: "each ankle motor ~1.0 into roll and pitch" —
-  모터 하나가 두 출력축에 같이 걸린다).
-
-두 경우 다 정확히 변환하려면 크랭크/차동 기구학(CAD 링크 길이 기반)이
-필요한데, project-unmeasured-params 메모 기준 **이 변환은 아직 유도되지
-않았다**(무릎 링크 길이도 코드에 없고, 발목 크랭크 각도범위조차 URDF
-플레이스홀더). 무릎은 원리상 어렵지 않은 문제(닫힌형 해 존재)지만, 링크
-길이를 CAD에서 뽑아오기 전까지는 "쉬운 문제"와 "이미 푼 문제"는 다르다.
-
-그래서 이 스크립트는 무릎·발목 관측 슬롯 6개를 실제 모터값으로 채우지
-않고 0.0 으로 둔다. 틀린 근사치를 그럴듯하게 보여주는 것보다, 모른다는 걸
-분명히 하는 쪽을 선택했다. 크랭크 모터 원시값은 참고용으로 별도 표시한다.
-마찬가지 이유로 정책이 내놓는 무릎·발목 action 도 "출력축 목표각(가상)"일
-뿐, 실제 모터 명령으로 바꿀 방법이 아직 없다 — 절대 그대로 CAN 에 실어
-보내지 말 것.
+이 스크립트에는 반드시 같은 motor-joint 순서로 학습한 closed-loop ONNX를
+명시적으로 넘겨야 한다. 과거 serial/output-joint 정책은 입력 크기가 같아도
+의미가 다르므로 호환되지 않는다.
 
 ## 각속도: raw 를 쓴다
 
@@ -53,7 +27,7 @@ r_ankle_roll, r_ankle_pitch. default_joint_pos/vel 는 전부 0 이므로 *_rel 
 보기 좋은 값을 보여주는 용도였기 때문이고 이유가 다르다.
 
     cd scripts/policy_test
-    python3 print_policy_action.py
+    python3 print_policy_action.py --policy /path/to/closed_loop_policy.onnx
 """
 import argparse
 import math
@@ -80,37 +54,26 @@ except ImportError:
 
 DEG = math.pi / 180.0
 
-# 정책이 학습된 로그 폴더. 여러 런이 있으면 가장 최근(디렉터리명이 타임스탬프라
-# 이름순 정렬이 시간순과 같다) 것의 exported/policy.onnx 를 기본값으로 쓴다.
-BALANCING_LOGS = (Path.home() / "humanoid_project" / "robonex_balancing" /
-                  "logs" / "rsl_rl" / "robonex_balancing")
-
-# 학습 시 observations.policy.joint_pos_rel/joint_vel_rel 의 asset_cfg.joint_names
-# 순서 (env.yaml 확인). default_joint_pos/vel 이 전부 0 이라 *_rel = 그냥 현재값.
+# Closed-loop 학습의 motor-joint 순서. 수동 knee/ankle 출력축은 제외한다.
 JOINT_ORDER = [
-    "l_hip_yaw", "l_hip_pitch", "l_hip_roll", "l_knee", "l_ankle_roll", "l_ankle_pitch",
-    "r_hip_yaw", "r_hip_pitch", "r_hip_roll", "r_knee", "r_ankle_roll", "r_ankle_pitch",
+    "l_hip_yaw", "l_hip_pitch", "l_hip_roll", "l_knee_pitch",
+    "l_ankle_upper", "l_ankle_lower",
+    "r_hip_yaw", "r_hip_pitch", "r_hip_roll", "r_knee_pitch",
+    "r_ankle_upper", "r_ankle_lower",
 ]
 
-# 이 6개(힙만)는 직결이라 CAN 모터 하나가 그 관절 그대로다 (hw-canbus.md
-# 매핑표 확인). 무릎은 크랭크를 거치므로 여기 넣지 않는다 - 위 docstring 참고.
-DIRECT_JOINT_TO_MOTOR = {
+JOINT_TO_MOTOR = {
     "l_hip_yaw": 1, "l_hip_pitch": 2, "l_hip_roll": 3,
+    "l_knee_pitch": 4, "l_ankle_upper": 5, "l_ankle_lower": 6,
     "r_hip_yaw": 7, "r_hip_pitch": 8, "r_hip_roll": 9,
+    "r_knee_pitch": 10, "r_ankle_upper": 11, "r_ankle_lower": 12,
 }
-# 이 6개(무릎 2 + 발목 4)는 모터 값이 곧 관절 값이 아니라서(위 docstring
-# 참고) 관측에 0.0 을 쓴다.
-APPROX_JOINTS = {"l_knee", "r_knee", "l_ankle_roll", "l_ankle_pitch", "r_ankle_roll", "r_ankle_pitch"}
-
-# 크랭크 모터(무릎 2 + 발목 4)는 참고 표시용으로만 읽는다. (motor_id, label)
-CRANK_REFERENCE_MOTORS = [(4, "left_knee_pitch"), (5, "left_ankle_upper"), (6, "left_ankle_lower"),
-                          (10, "right_knee_pitch"), (11, "right_ankle_upper"), (12, "right_ankle_lower")]
 
 # actions.joint_pos.scale (env.yaml). offset 0, use_default_offset 이지만
 # default_joint_pos 가 0 이라 target = scale * raw_action 그대로다.
 ACTION_SCALE = {
     "hip_yaw": 0.12, "hip_pitch": 0.15, "hip_roll": 0.12,
-    "knee": 0.15, "ankle_roll": 0.08, "ankle_pitch": 0.08,
+    "knee_pitch": 0.15, "ankle_upper": 0.08, "ankle_lower": 0.08,
 }
 
 
@@ -140,11 +103,6 @@ MOTOR_LABEL = {
     7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll", 10: "right_knee_pitch",
     11: "right_ankle_upper", 12: "right_ankle_lower",
 }
-
-
-def find_latest_policy():
-    candidates = sorted(BALANCING_LOGS.glob("*/exported/policy.onnx"))
-    return candidates[-1] if candidates else None
 
 
 def build_arb(comm_type, data16, target_id):
@@ -225,14 +183,12 @@ class CanReader(threading.Thread):
 def build_observation(snapshot, ang_vel, gravity, prev_action):
     """학습 순서 그대로 42차원 관측 벡터를 만든다.
 
-    무릎·발목 6개(APPROX_JOINTS)는 pos/vel 모두 0.0 — 위 docstring 참고.
+    12개 항목 모두 closed-loop 모델의 실제 모터축 CAN 피드백이다.
     """
     pos = np.zeros(12, dtype=np.float32)
     vel = np.zeros(12, dtype=np.float32)
     for i, joint in enumerate(JOINT_ORDER):
-        motor_id = DIRECT_JOINT_TO_MOTOR.get(joint)
-        if motor_id is None:
-            continue   # 무릎·발목 근사 슬롯: 0.0 유지
+        motor_id = JOINT_TO_MOTOR[joint]
         p, v = snapshot.get(motor_id, (None, None))
         pos[i] = p if p is not None else 0.0
         vel[i] = v if v is not None else 0.0
@@ -250,8 +206,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="robonex_balancing 정책으로 관측값을 만들어 action 을 추정해 "
                     "출력한다. 읽기 전용, 모터에 명령을 보내지 않는다.")
-    parser.add_argument("--policy", type=Path, default=find_latest_policy(),
-                        help="policy.onnx 경로. 기본값: logs/rsl_rl 아래 가장 최근 런")
+    parser.add_argument("--policy", type=Path, required=True,
+                        help="closed-loop motor-joint 순서로 학습한 policy.onnx 경로")
     parser.add_argument("--imu-port", default="/dev/ttyUSB0", help="IMU 시리얼 포트")
     parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS),
                         choices=list(CHANNEL_MOTOR_IDS), help="사용할 CAN 채널")
@@ -264,18 +220,23 @@ def main():
     if args.rate <= 0:
         print("--rate 는 양수여야 합니다.")
         return 1
-    if args.policy is None:
-        print(f"{BALANCING_LOGS} 아래에서 policy.onnx 를 찾지 못했습니다. "
-              "--policy 로 직접 지정하세요.")
-        return 1
     if not args.policy.exists():
         print(f"정책 파일이 없습니다: {args.policy}")
         return 1
 
     session = ort.InferenceSession(str(args.policy), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
+    input_shape = session.get_inputs()[0].shape
+    output_shape = session.get_outputs()[0].shape
+    if input_shape[-1] not in (None, "None", 42):
+        print(f"정책 입력 크기가 42가 아닙니다: {input_shape}")
+        return 1
+    if output_shape[-1] not in (None, "None", 12):
+        print(f"정책 출력 크기가 12가 아닙니다: {output_shape}")
+        return 1
     print(f"정책: {args.policy}")
-    print(f"  입력 {session.get_inputs()[0].shape}  출력 {session.get_outputs()[0].shape}\n")
+    print(f"  입력 {input_shape}  출력 {output_shape}")
+    print("  의미: closed-loop motor-joint 12축 정책 (legacy output-joint 정책 사용 금지)\n")
 
     notes = []
     state = {mid: (None, None) for mid in MOTOR_LABEL}
@@ -322,23 +283,14 @@ def main():
             can_hz = "  ".join(f"{r.channel} {r.rate_hz:5.1f} Hz" for r in readers)
             lines.append(f"정책 action 추정 (읽기 전용)   {can_hz}   (Ctrl-C 종료)\n")
 
-            lines.append("직접 매핑 관절 (6개, CAN 모터 = 관절, 힙만)")
+            lines.append("closed-loop 구동 관절 (12개, CAN 모터축과 동일)")
             lines.append(f"  {'관절':<14}  {'ID':>3}  {'pos [rad]':>10}  {'vel [rad/s]':>12}")
             for joint in JOINT_ORDER:
-                motor_id = DIRECT_JOINT_TO_MOTOR.get(joint)
-                if motor_id is None:
-                    continue
+                motor_id = JOINT_TO_MOTOR[joint]
                 p, v = snapshot.get(motor_id, (None, None))
                 pv = f"{p:+10.4f}" if p is not None else f"{'--':>10}"
                 vv = f"{v:+12.4f}" if v is not None else f"{'--':>12}"
                 lines.append(f"  {joint:<14}  {motor_id:>3}  {pv}  {vv}")
-
-            lines.append("\n크랭크 모터 원시값 (무릎+발목, 참고용, 관측에는 포함되지 않음 — 위 docstring)")
-            for motor_id, label in CRANK_REFERENCE_MOTORS:
-                p, v = snapshot.get(motor_id, (None, None))
-                pv = f"{p:+10.4f}" if p is not None else f"{'--':>10}"
-                vv = f"{v:+12.4f}" if v is not None else f"{'--':>12}"
-                lines.append(f"  {label:<18}  {motor_id:>3}  {pv}  {vv}")
 
             if sample is None:
                 lines.append("\nIMU 아직 샘플 없음, 관측은 0/gravity(0,0,-1)로 대체")
@@ -359,13 +311,10 @@ def main():
             lines.append(f"  {'관절':<14}  {'raw':>8}  {'목표각[rad]':>12}  {'[deg]':>8}")
             for joint, a in zip(JOINT_ORDER, action):
                 target = a * scale_of(joint)
-                tag = "  (가상, 크랭크 기구학 미해결)" if joint in APPROX_JOINTS else ""
                 lines.append(f"  {joint:<14}  {a:+8.4f}  {target:+12.4f}  "
-                             f"{target / DEG:+7.2f}{tag}")
+                             f"{target / DEG:+7.2f}")
 
-            lines.append("\n⚠ 무릎·발목 목표각은 정강이/출력축(pitch·roll) 기준의 정책 희망값일 뿐이다.")
-            lines.append("   실제 크랭크/upper/lower 모터 명령으로 바꾸는 변환이 아직 없으니 그대로")
-            lines.append("   CAN 에 실어 보내지 말 것 (무릎 2 + 발목 4, docstring 참고).")
+            lines.append("\n읽기 전용: 이 도구는 action을 CAN으로 전송하지 않는다.")
 
             if notes:
                 lines.append("")

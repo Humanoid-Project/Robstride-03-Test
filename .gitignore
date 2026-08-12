@@ -8,6 +8,8 @@ scripts/motor_imu_test/build/
 scripts/motor_imu_test/n100_cpp/build/
 scripts/policy_test/build/
 scripts/policy_test/n100_cpp/build/
+scripts/cal_values/**/logs/
+scripts/cal_values/**/data/
 *.so
 *.a
 

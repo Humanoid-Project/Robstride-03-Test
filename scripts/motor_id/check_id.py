@@ -37,7 +37,8 @@ def get_device_id(bus, host_id, target_id, timeout=0.2):
         if msg is None or not msg.is_extended_id:
             continue
         comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        if comm_type == 0x00 and (data16 & 0xFF) == target_id:
+        if (comm_type == 0x00 and destination == host_id
+                and (data16 & 0xFF) == target_id):
             motor_id = data16 & 0xFF
             uid = bytes(msg.data)
             return motor_id, uid

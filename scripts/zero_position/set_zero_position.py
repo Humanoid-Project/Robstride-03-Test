@@ -13,6 +13,7 @@ DEFAULT_INTERFACE = "socketcan"
 MECH_POS_INDEX = 0x7019
 ZERO_STA_INDEX = 0x7029
 
+TYPE_STOP = 0x04
 TYPE_SET_ZERO = 0x06
 TYPE_WRITE_PARAM = 0x12
 TYPE_SAVE = 0x16
@@ -82,6 +83,18 @@ def read_mech_position_retry(bus, host_id, motor_id, attempts=5, timeout=0.2):
         if position is not None:
             return position
     return None
+
+
+def stop_motor(bus, host_id, motor_id):
+    """type 0x04 정지(disable). 영점 설정 전에 반드시 보낼 것.
+
+    ⚠ 이 스크립트는 원래 "모터가 enable 상태가 아니어야 한다"고 경고만 하고 실제 정지
+    명령은 안 보냈다(2026-08-09 지적으로 발견). 구버전 펌웨어는 enable 상태에서 영점을
+    설정하면 목표위치와 실제위치의 괴리로 모터가 급하게 움직인다 — 경고문에 의존하지
+    말고 코드가 직접 disable 시킨다."""
+    bus.send(can.Message(arbitration_id=build_arb(TYPE_STOP, host_id, motor_id),
+                         data=bytes(8), is_extended_id=True))
+    time.sleep(0.02)
 
 
 def set_mechanical_zero(bus, host_id, motor_id):
@@ -179,8 +192,8 @@ def main():
             return 1
 
         print(f"\n대상 {len(before)}개 모터의 현재 위치를 기계적 영점(0)으로 지정합니다.")
-        print("주의: 모터가 enable 상태가 아니어야 합니다. 구버전 펌웨어는 enable 상태에서")
-        print("영점을 설정하면 모터가 목표 위치로 급하게 움직일 수 있습니다.\n")
+        print("영점 설정 직전에 각 모터에 정지(disable) 명령을 먼저 보냅니다 — 구버전 펌웨어는")
+        print("enable 상태에서 영점을 설정하면 모터가 목표 위치로 급하게 움직일 수 있습니다.\n")
 
         if not args.yes:
             answer = input("계속하려면 Enter, 취소하려면 Ctrl-C: ")
@@ -193,6 +206,9 @@ def main():
         for motor_id in sorted(before):
             channel = channel_for_id(motor_id)
             bus = buses[channel]
+
+            # 영점 설정 전 반드시 정지(disable) — stop_motor() docstring 참고.
+            stop_motor(bus, args.host_id, motor_id)
 
             if args.zero_sta is not None:
                 write_uint8_parameter(bus, args.host_id, motor_id, ZERO_STA_INDEX, args.zero_sta)

@@ -151,6 +151,17 @@ def wait_for_yes_no(prompt, keyboard):
             print("N")
             return False
 
+def stop_motor(bus, host_id, motor_id):
+    """type 0x04 정지(disable).
+
+    ⚠ 이 스크립트는 사용자가 관절을 **손으로** 돌리게 하는데, 이전에는 그 전에 정지 명령을
+    보내지 않았다(2026-08-09 지적으로 발견). 다른 스크립트가 남겨둔 enable/위치유지 상태가
+    살아 있으면 손으로 미는 힘에 모터가 저항하거나 튈 수 있다 — 시작 전에 확실히 끈다."""
+    bus.send(can.Message(arbitration_id=build_arb(0x04, host_id, motor_id),
+                         data=bytes(8), is_extended_id=True))
+    time.sleep(0.02)
+
+
 def measure(bus, args, keyboard):
     minimum = None
     maximum = None
@@ -159,8 +170,12 @@ def measure(bus, args, keyboard):
     period = 1.0 / args.rate
     next_tick = time.monotonic()
 
+    # 손으로 돌리기 전에 반드시 모터를 꺼둔다 — stop_motor() docstring 참고.
+    stop_motor(bus, args.host_id, args.motor_id)
+
     print(f"Recording motor ID {args.motor_id} on {args.channel}.")
-    print("Rotate the joint by hand through its full travel. Press Q when done.\n")
+    print("Motor disabled (stop sent). Rotate the joint by hand through its full travel. "
+          "Press Q when done.\n")
 
     while True:
         key = keyboard.get_key()
