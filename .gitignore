@@ -4,12 +4,12 @@
 __pycache__/
 *.pyc
 
-scripts/motor_imu_test/build/
-scripts/motor_imu_test/n100_cpp/build/
-scripts/policy_test/build/
-scripts/policy_test/n100_cpp/build/
-scripts/cal_values/**/logs/
-scripts/cal_values/**/data/
+scripts/motor_control/motor_with_imu_test/build/
+scripts/motor_control/motor_with_imu_test/n100_cpp/build/
+scripts/motor_control/policy_test/build/
+scripts/motor_control/policy_test/n100_cpp/build/
+scripts/measurements/**/logs/
+scripts/measurements/**/data/
 *.so
 *.a
 
