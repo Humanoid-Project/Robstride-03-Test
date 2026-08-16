@@ -23,7 +23,7 @@ measurements/
     └── read_joint_with_imu.py
 ```
 
-</br>
+<br>
 
 ## armature
 
@@ -60,7 +60,7 @@ python3 scripts/measurements/armature/analyze_armature.py \
   "scripts/measurements/armature/data/id11_rs02_*.csv"
 ```
 
-</br>
+<br>
 
 ## damping
 
@@ -97,7 +97,7 @@ python3 scripts/measurements/damping/analyze_damping.py \
   "scripts/measurements/damping/data/id4_rs03_*.csv"
 ```
 
-</br>
+<br>
 
 ## friction
 
@@ -133,7 +133,7 @@ python3 scripts/measurements/friction/analyze_friction.py \
   "scripts/measurements/friction/data/id4_rs03_*.csv"
 ```
 
-</br>
+<br>
 
 ## joint
 

@@ -23,7 +23,7 @@ motor_control/
     └── n100_cpp/
 ```
 
-</br>
+<br>
 
 ## motor_test
 
@@ -64,7 +64,7 @@ python3 scripts/motor_control/motor_test/motor_run_gui.py \
   --model rs02
 ```
 
-</br>
+<br>
 
 ## motor_with_imu_test
 
@@ -110,7 +110,7 @@ python3 scripts/motor_control/motor_with_imu_test/motor_imu_run.py \
   --channels can0 can1
 ```
 
-</br>
+<br>
 
 ## mujoco_to_real
 
@@ -151,7 +151,7 @@ python3 scripts/motor_control/mujoco_to_real/mujoco_hardware_twin.py \
   --motor-id 4
 ```
 
-</br>
+<br>
 
 ## policy_test
 

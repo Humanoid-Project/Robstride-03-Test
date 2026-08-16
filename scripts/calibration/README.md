@@ -12,7 +12,7 @@ calibration/
     └── set_zero_position.py
 ```
 
-</br>
+<br>
 
 ## motor_id
 
@@ -36,7 +36,7 @@ python3 scripts/calibration/motor_id/motor_id.py find --channel can0 --motor-id 
 python3 scripts/calibration/motor_id/motor_id.py set --channel can0 --current-id 1 --new-id 4
 ```
 
-</br>
+<br>
 
 ### `set_motor_id_gui.py`
 
@@ -52,7 +52,7 @@ python3 scripts/calibration/motor_id/motor_id.py set --channel can0 --current-id
 python3 scripts/calibration/motor_id/set_motor_id_gui.py --channel can0
 ```
 
-</br>
+<br>
 
 ## zero_position
 

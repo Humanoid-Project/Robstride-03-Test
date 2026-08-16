@@ -33,10 +33,9 @@ except ImportError:
 DEG = math.pi / 180.0
 
 JOINT_ORDER = [
-    "l_hip_yaw", "l_hip_pitch", "l_hip_roll", "l_knee_pitch",
-    "l_ankle_upper", "l_ankle_lower",
-    "r_hip_yaw", "r_hip_pitch", "r_hip_roll", "r_knee_pitch",
-    "r_ankle_upper", "r_ankle_lower",
+    "l_hip_yaw", "r_hip_yaw", "l_hip_pitch", "r_hip_pitch",
+    "l_hip_roll", "r_hip_roll", "l_knee_pitch", "r_knee_pitch",
+    "l_ankle_lower", "l_ankle_upper", "r_ankle_lower", "r_ankle_upper",
 ]
 
 JOINT_TO_MOTOR = {
