@@ -20,13 +20,13 @@ calibration/
 
 | Command | Option | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `check` | `--channels` | No | `can0 can1` | 확인할 CAN 채널 |
-| `find` | `--channel` | Yes | - | 검색할 채널 (`can0`, `can1`) |
-| `find` | `--motor-id` | No | - | 특정 ID만 확인 (`0~127`) |
-| `find` | `--scan-max` | No | `127` | 검색할 최대 ID (`0~127`) |
-| `set` | `--channel` | Yes | - | 대상 채널 (`can0`, `can1`) |
-| `set` | `--current-id` | Yes | - | 현재 ID (`0~127`) |
-| `set` | `--new-id` | Yes | - | 새 ID (`1~127`) |
+| `check` | `--channels` | No | `can0 can1` | CAN channels to check |
+| `find` | `--channel` | Yes | - | Channel to scan (`can0`, `can1`) |
+| `find` | `--motor-id` | No | - | Check only this ID (`0~127`) |
+| `find` | `--scan-max` | No | `127` | Highest ID to scan (`0~127`) |
+| `set` | `--channel` | Yes | - | Target channel (`can0`, `can1`) |
+| `set` | `--current-id` | Yes | - | Current ID (`0~127`) |
+| `set` | `--new-id` | Yes | - | New ID (`1~127`) |
 
 ```bash
 # Example
@@ -42,10 +42,10 @@ python3 scripts/calibration/motor_id/motor_id.py set --channel can0 --current-id
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--channel` | No | `can0` | 대상 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
-| `--scan-max` | No | `127` | 검색할 최대 ID (`0~127`) |
+| `--channel` | No | `can0` | Target CAN channel |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--scan-max` | No | `127` | Highest ID to scan (`0~127`) |
 
 ```bash
 # Example
@@ -60,13 +60,13 @@ python3 scripts/calibration/motor_id/set_motor_id_gui.py --channel can0
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | 설정할 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
-| `--save` | No | Off | 영점 설정 후 저장 프레임(`0x16`) 전송 |
-| `--zero-sta` | No | - | 전원 인가 시 범위: `0=0..2π`, `1=-π..π`; 지정 시 자동 저장 |
-| `--tolerance` | No | `0.05` | 영점 확인 허용 오차(rad) |
-| `--yes` | No | Off | 확인 입력 생략 |
+| `--channels` | No | `can0 can1` | CAN channels to set |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--save` | No | Off | Send save frame (`0x16`) after setting zero |
+| `--zero-sta` | No | - | Power-on range: `0=0..2π`, `1=-π..π`; auto-saves when set |
+| `--tolerance` | No | `0.05` | Allowed error for zero verification (rad) |
+| `--yes` | No | Off | Skip the confirmation prompt |
 
 ```bash
 # Example

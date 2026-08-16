@@ -31,11 +31,11 @@ measurements/
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | 대상 모터 ID |
-| `--model` | Yes | - | 모터 모델 (`rs02`, `rs03`) |
-| `--channel` | No | ID로 자동 선택 | 대상 CAN 채널 |
-| `--torques` | Yes | - | 측정 토크 목록(N·m, 부호 포함) |
-| `--repeats` | No | `1` | 토크별 반복 횟수 |
+| `--motor-id` | Yes | - | Target motor ID |
+| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
+| `--channel` | No | Auto from ID | Target CAN channel |
+| `--torques` | Yes | - | List of test torques (N·m, signed) |
+| `--repeats` | No | `1` | Repeats per torque |
 
 ```bash
 # Example
@@ -51,8 +51,8 @@ python3 scripts/measurements/armature/armature.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `csv_files` | Yes | - | 분석할 CSV 파일 또는 glob 목록 |
-| `--skip-ms` | No | `15` | 시작 과도구간 제외 시간(ms) |
+| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
+| `--skip-ms` | No | `15` | Startup transient to exclude (ms) |
 
 ```bash
 # Example
@@ -68,11 +68,11 @@ python3 scripts/measurements/armature/analyze_armature.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | 대상 모터 ID |
-| `--model` | Yes | - | 모터 모델 (`rs02`, `rs03`) |
-| `--channel` | No | ID로 자동 선택 | 대상 CAN 채널 |
-| `--speeds` | Yes | - | 목표 속도 목록(rad/s, 부호 포함) |
-| `--repeats` | No | `1` | 속도별 반복 횟수 |
+| `--motor-id` | Yes | - | Target motor ID |
+| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
+| `--channel` | No | Auto from ID | Target CAN channel |
+| `--speeds` | Yes | - | List of target speeds (rad/s, signed) |
+| `--repeats` | No | `1` | Repeats per speed |
 
 ```bash
 # Example
@@ -88,8 +88,8 @@ python3 scripts/measurements/damping/damping.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `csv_files` | Yes | - | 분석할 CSV 파일 또는 glob 목록 |
-| `--skip-s` | No | `0.1` | 시작 정착구간 제외 시간(s) |
+| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
+| `--skip-s` | No | `0.1` | Startup settling time to exclude (s) |
 
 ```bash
 # Example
@@ -105,11 +105,11 @@ python3 scripts/measurements/damping/analyze_damping.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | 대상 모터 ID |
-| `--model` | Yes | - | 모터 모델 (`rs02`, `rs03`) |
-| `--channel` | No | ID로 자동 선택 | 대상 CAN 채널 |
-| `--signs` | No | `1 -1` | 측정 방향 (`1`, `-1`) |
-| `--repeats` | No | `3` | 방향별 반복 횟수 |
+| `--motor-id` | Yes | - | Target motor ID |
+| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
+| `--channel` | No | Auto from ID | Target CAN channel |
+| `--signs` | No | `1 -1` | Test direction(s) (`1`, `-1`) |
+| `--repeats` | No | `3` | Repeats per direction |
 
 ```bash
 # Example
@@ -125,7 +125,7 @@ python3 scripts/measurements/friction/friction.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `csv_files` | Yes | - | 분석할 CSV 파일 또는 glob 목록 |
+| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
 
 ```bash
 # Example
@@ -141,12 +141,12 @@ python3 scripts/measurements/friction/analyze_friction.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | 확인할 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
-| `--timeout` | No | `0.1` | 모터별 응답 대기 시간(s); `--watch` 사용 시 `0.02` |
-| `--watch` | No | Off | 관절값 연속 출력 |
-| `--interval` | No | `0.1` | 연속 출력 갱신 주기(s) |
+| `--channels` | No | `can0 can1` | CAN channels to check |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--timeout` | No | `0.1` | Per-motor response timeout (s); `0.02` with `--watch` |
+| `--watch` | No | Off | Continuously print joint values |
+| `--interval` | No | `0.1` | Refresh interval for `--watch` (s) |
 
 ```bash
 # Example
@@ -157,11 +157,11 @@ python3 scripts/measurements/joint/read_joint_values.py --watch
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--imu-port` | No | `/dev/ttyUSB0` | N100 시리얼 포트 |
-| `--channels` | No | `can0 can1` | 확인할 CAN 채널 |
-| `--n100-dir` | No | 자동 경로 | `n100*.so`가 있는 폴더 |
-| `--no-imu` | No | Off | IMU 없이 모터값만 출력 |
-| `--timeout` | No | `0.02` | 모터 응답 대기 시간(s) |
+| `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
+| `--channels` | No | `can0 can1` | CAN channels to check |
+| `--n100-dir` | No | Auto-detected | Folder containing `n100*.so` |
+| `--no-imu` | No | Off | Print motor values only, without the IMU |
+| `--timeout` | No | `0.02` | Per-motor response timeout (s) |
 
 ```bash
 # Example

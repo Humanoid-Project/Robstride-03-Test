@@ -31,10 +31,10 @@ motor_control/
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | 사용할 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
-| `--yes` | No | Off | 확인 입력 생략 |
+| `--channels` | No | `can0 can1` | CAN channels to use |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--yes` | No | Off | Skip the confirmation prompt |
 
 ```bash
 # Example
@@ -45,11 +45,11 @@ python3 scripts/motor_control/motor_test/set_motor_pose.py --channels can0
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--channel` | No | `can0` | 대상 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--motor-id` | No | `5` | 모터 ID 1개 또는 2개 |
-| `--model` | No | `rs03` | 공통 모델 1개 또는 모터별 모델 (`rs02`, `rs03`) |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
+| `--channel` | No | `can0` | Target CAN channel |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--motor-id` | No | `5` | One or two motor IDs |
+| `--model` | No | `rs03` | One shared model, or one model per motor (`rs02`, `rs03`) |
+| `--host-id` | No | `0xFD` | Host CAN ID |
 
 ```bash
 # Example
@@ -99,9 +99,9 @@ cmake --build scripts/motor_control/motor_with_imu_test/build -j
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--imu-port` | No | `/dev/ttyUSB0` | N100 시리얼 포트 |
-| `--channels` | No | `can0 can1` | 사용할 CAN 채널 |
-| `--yes` | No | Off | 확인 입력 생략 |
+| `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
+| `--channels` | No | `can0 can1` | CAN channels to use |
+| `--yes` | No | Off | Skip the confirmation prompt |
 
 ```bash
 # Example
@@ -118,26 +118,26 @@ python3 scripts/motor_control/motor_with_imu_test/motor_imu_run.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--hardware` | No | Off | 실물 CAN 추종 활성화 |
-| `--motor-id` | No | `1~12` | 추종할 모터 ID 목록 |
-| `--model` | No | `scene_fixed.xml` | fixed-base MJCF 경로 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--host-id` | No | `0xFD` | 호스트 CAN ID |
-| `--rate` | No | `100` | 명령 주기(Hz) |
-| `--max-speed` | No | `0.10` | 최대 목표 속도(rad/s) |
-| `--max-accel` | No | `0.25` | 최대 목표 가속도(rad/s²) |
-| `--kp` | No | `40.0` | 위치 게인 |
-| `--kd` | No | `2.0` | 감쇠 게인 |
-| `--zero-tolerance-deg` | No | `3.0` | zero 도달 허용 오차(deg) |
-| `--limit-margin-deg` | No | `3.0` | 관절 한계 안쪽 여유(deg) |
-| `--feedback-timeout` | No | `0.30` | 피드백 제한 시간(s) |
-| `--overspeed` | No | `0.50` | 과속 정지 기준(rad/s) |
-| `--max-error-deg` | No | `10.0` | 추종 오차 정지 기준(deg) |
-| `--max-temp` | No | `70.0` | 과열 정지 기준(°C) |
-| `--brake-time` | No | `0.20` | 종료 전 능동 감쇠 시간(s) |
-| `--yes` | No | Off | 실물 시작 확인 입력 생략 |
-| `--headless` | No | Off | 뷰어 없이 실행 |
-| `--duration` | No | - | 지정 시간 후 종료(s) |
+| `--hardware` | No | Off | Enable real CAN following |
+| `--motor-id` | No | `1~12` | Motor IDs to follow |
+| `--model` | No | `scene_fixed.xml` | Path to the fixed-base MJCF |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--rate` | No | `100` | Command rate (Hz) |
+| `--max-speed` | No | `0.10` | Max target speed (rad/s) |
+| `--max-accel` | No | `0.25` | Max target acceleration (rad/s²) |
+| `--kp` | No | `40.0` | Position gain |
+| `--kd` | No | `2.0` | Damping gain |
+| `--zero-tolerance-deg` | No | `3.0` | Allowed error to declare zero reached (deg) |
+| `--limit-margin-deg` | No | `3.0` | Margin inside the joint limit (deg) |
+| `--feedback-timeout` | No | `0.30` | Feedback freshness limit (s) |
+| `--overspeed` | No | `0.50` | Overspeed stop threshold (rad/s) |
+| `--max-error-deg` | No | `10.0` | Tracking-error stop threshold (deg) |
+| `--max-temp` | No | `70.0` | Overtemperature stop threshold (°C) |
+| `--brake-time` | No | `0.20` | Active braking time before shutdown (s) |
+| `--yes` | No | Off | Skip the hardware-start confirmation prompt |
+| `--headless` | No | Off | Run without the viewer |
+| `--duration` | No | - | Auto-stop after this many seconds |
 
 ```bash
 # Example
@@ -173,11 +173,11 @@ cmake --build scripts/motor_control/policy_test/build -j
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--imu-port` | No | `/dev/ttyUSB0` | N100 시리얼 포트 |
-| `--channels` | No | `can0 can1` | 확인할 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--timeout` | No | `0.02` | 모터별 파라미터 응답 대기 시간(s) |
-| `--rate` | No | `10.0` | 출력 주기(Hz) |
+| `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
+| `--channels` | No | `can0 can1` | CAN channels to check |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--timeout` | No | `0.02` | Per-motor parameter response timeout (s) |
+| `--rate` | No | `10.0` | Print rate (Hz) |
 
 ```bash
 # Example
@@ -189,12 +189,12 @@ python3 scripts/motor_control/policy_test/print_policy_values.py \
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
-| `--policy` | Yes | - | closed-loop `policy.onnx` 경로 |
-| `--imu-port` | No | `/dev/ttyUSB0` | N100 시리얼 포트 |
-| `--channels` | No | `can0 can1` | 확인할 CAN 채널 |
-| `--interface` | No | `socketcan` | python-can 인터페이스 |
-| `--timeout` | No | `0.02` | 모터별 파라미터 응답 대기 시간(s) |
-| `--rate` | No | `10.0` | 출력 주기(Hz) |
+| `--policy` | Yes | - | Path to the closed-loop `policy.onnx` |
+| `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
+| `--channels` | No | `can0 can1` | CAN channels to check |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--timeout` | No | `0.02` | Per-motor parameter response timeout (s) |
+| `--rate` | No | `10.0` | Print rate (Hz) |
 
 ```bash
 # Example
