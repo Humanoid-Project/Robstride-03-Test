@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import math
 from pathlib import Path
@@ -13,20 +14,22 @@ import mujoco.viewer
 import numpy as np
 
 THIS_FILE = Path(__file__).resolve()
+PROJECT_ROOT = THIS_FILE.parents[4]
+DEFAULT_MODEL_PATH = (
+    PROJECT_ROOT / "robonex_description" / "mujoco" / "full_limit"
+    / "scene_fixed_full_limit.xml"
+)
 sys.path.insert(0, str(THIS_FILE.parent))
 
-from mujoco_hardware_twin import (
+from mujoco_to_real import (
     DEFAULT_INTERFACE,
-    DEFAULT_MODEL_PATH,
     HOST_ID,
-    JOINT_LIMITS_RAD,
     JOINT_MAP,
-    MOTOR_ACTUATORS,
     MOTOR_MODELS,
+    channel_for_id,
     clamp,
     load_fixed_model,
     open_hardware,
-    verify_model_limits,
 )
 
 MAX_RATE = 100.0
@@ -151,7 +154,7 @@ def confirm_hardware(args, motor_ids, model_path):
     print(f"  motor IDs   : {motor_ids}")
     print(f"  update rate : {args.rate:g} Hz per motor")
     print("  CAN write   : 시작·종료 시 stop만 전송")
-    print("  CAN read    : mechPos(0x7019) 반복 조회")
+    print("  CAN read    : mechPos(0x7019) 버스별 병렬 조회")
     print("  미전송       : enable, run-mode write, type-0x01 control")
     print("  전제         : 로봇 고정, 관절 주변 비움, 손 끼임 주의")
     if args.yes:
@@ -174,49 +177,95 @@ def stop_motors(motors, required):
         raise RuntimeError("stop 전송 실패: " + "; ".join(failures))
 
 
-def collect_initial_positions(motors, timeout, read_timeout):
+def motors_by_channel(motors):
+    groups = {}
+    for motor_id, motor in motors.items():
+        groups.setdefault(channel_for_id(motor_id), {})[motor_id] = motor
+    return groups
+
+
+def read_group_positions(group, read_timeout):
+    positions = {}
+    for motor_id in sorted(group):
+        value = group[motor_id].read_mech_position(timeout=read_timeout)
+        if value is not None:
+            positions[motor_id] = value
+    return positions
+
+
+def read_all_positions(groups, executor, read_timeout):
+    if not groups:
+        return {}
+    if len(groups) == 1:
+        return read_group_positions(next(iter(groups.values())), read_timeout)
+    positions = {}
+    futures = [
+        executor.submit(read_group_positions, group, read_timeout)
+        for group in groups.values()
+    ]
+    for future in futures:
+        positions.update(future.result())
+    return positions
+
+
+def collect_initial_positions(motors, groups, executor, timeout, read_timeout):
     deadline = time.monotonic() + timeout
     positions = {}
     while len(positions) < len(motors) and time.monotonic() < deadline:
-        for motor_id in sorted(motors):
-            if motor_id in positions:
-                continue
-            value = motors[motor_id].read_mech_position(timeout=read_timeout)
-            if value is not None:
-                positions[motor_id] = value
+        remaining = {
+            channel: {
+                motor_id: motor
+                for motor_id, motor in group.items()
+                if motor_id not in positions
+            }
+            for channel, group in groups.items()
+        }
+        remaining = {channel: group for channel, group in remaining.items() if group}
+        positions.update(read_all_positions(remaining, executor, read_timeout))
     missing = sorted(set(motors) - set(positions))
     if missing:
         raise RuntimeError(f"최초 mechPos 응답 없음: {missing}")
     return positions
 
 
-def validate_positions(positions, tolerance_rad):
+def model_limits_rad(model, actuator_ids):
+    return {
+        motor_id: tuple(float(v) for v in model.actuator_ctrlrange[actuator_id])
+        for motor_id, actuator_id in actuator_ids.items()
+    }
+
+
+def wrap_to_pi(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def validate_positions(positions, limits, tolerance_rad):
     targets = {}
     clamped = set()
     for motor_id, value in positions.items():
         if not math.isfinite(value):
             raise RuntimeError(f"ID {motor_id} mechPos가 NaN/inf")
-        lower, upper = JOINT_LIMITS_RAD[motor_id]
-        if value < lower - tolerance_rad or value > upper + tolerance_rad:
+        wrapped = wrap_to_pi(value)
+        lower, upper = limits[motor_id]
+        if wrapped < lower - tolerance_rad or wrapped > upper + tolerance_rad:
             raise RuntimeError(
-                f"ID {motor_id} mechPos {math.degrees(value):+.2f}deg가 모델 범위 "
+                f"ID {motor_id} mechPos {math.degrees(value):+.2f}deg "
+                f"(wrap {math.degrees(wrapped):+.2f}deg)가 모델 범위 "
                 f"{math.degrees(lower):+.2f}..{math.degrees(upper):+.2f}deg 밖"
             )
-        target = clamp(value, lower, upper)
-        if target != value:
+        target = clamp(wrapped, lower, upper)
+        if target != wrapped:
             clamped.add(motor_id)
         targets[motor_id] = target
     return targets, clamped
 
 
-def poll_positions(motors, positions, last_seen, read_timeout, stale_timeout):
-    for motor_id in sorted(motors):
-        value = motors[motor_id].read_mech_position(timeout=read_timeout)
-        now = time.monotonic()
-        if value is not None:
-            positions[motor_id] = value
-            last_seen[motor_id] = now
+def poll_positions(motors, groups, executor, positions, last_seen, read_timeout, stale_timeout):
+    got = read_all_positions(groups, executor, read_timeout)
     now = time.monotonic()
+    for motor_id, value in got.items():
+        positions[motor_id] = value
+        last_seen[motor_id] = now
     stale = [
         f"ID {motor_id} {now - last_seen[motor_id]:.3f}s"
         for motor_id in sorted(motors)
@@ -263,7 +312,7 @@ def run(args):
     if problems:
         raise RuntimeError("인자 오류:\n  " + "\n  ".join(problems))
     model_path, model, actuator_ids = load_fixed_model(args.model, motor_ids)
-    verify_model_limits(model, actuator_ids, motor_ids)
+    limits = model_limits_rad(model, actuator_ids)
     model.opt.gravity[:] = 0.0
     confirm_hardware(args, motor_ids, model_path)
 
@@ -276,67 +325,71 @@ def run(args):
         )
         stop_motors(motors, required=True)
         time.sleep(0.05)
-        positions = collect_initial_positions(
-            motors, args.startup_timeout, args.read_timeout
-        )
-        targets, clamped = validate_positions(
-            positions, math.radians(args.limit_tolerance_deg)
-        )
-        last_seen = {motor_id: time.monotonic() for motor_id in motor_ids}
+        groups = motors_by_channel(motors)
+        with ThreadPoolExecutor(max_workers=max(1, len(groups))) as executor:
+            positions = collect_initial_positions(
+                motors, groups, executor, args.startup_timeout, args.read_timeout
+            )
+            targets, clamped = validate_positions(
+                positions, limits, math.radians(args.limit_tolerance_deg)
+            )
+            last_seen = {motor_id: time.monotonic() for motor_id in motor_ids}
 
-        data = mujoco.MjData(model)
-        data.ctrl[:] = 0.0
-        qpos_addresses = initialize_simulation(
-            model, data, actuator_ids, targets
-        )
-        if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
-            raise RuntimeError("초기 MuJoCo 상태에 NaN/inf")
+            data = mujoco.MjData(model)
+            data.ctrl[:] = 0.0
+            qpos_addresses = initialize_simulation(
+                model, data, actuator_ids, targets
+            )
+            if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
+                raise RuntimeError("초기 MuJoCo 상태에 NaN/inf")
 
-        viewer_context = (
-            contextlib.nullcontext(None)
-            if args.headless
-            else mujoco.viewer.launch_passive(model, data)
-        )
-        period = 1.0 / args.rate
-        sim_steps = max(1, int(round(period / model.opt.timestep)))
-        start_time = time.monotonic()
-        next_tick = start_time
-        last_print = 0.0
+            viewer_context = (
+                contextlib.nullcontext(None)
+                if args.headless
+                else mujoco.viewer.launch_passive(model, data)
+            )
+            period = 1.0 / args.rate
+            sim_steps = max(1, int(round(period / model.opt.timestep)))
+            start_time = time.monotonic()
+            next_tick = start_time
+            last_print = 0.0
 
-        print("\n수동 위치 반영을 시작합니다. 종료하려면 viewer를 닫거나 Ctrl-C를 누르세요.")
-        with viewer_context as viewer:
-            while viewer is None or viewer.is_running():
-                now = time.monotonic()
-                if args.duration is not None and now - start_time >= args.duration:
-                    break
-                poll_positions(
-                    motors,
-                    positions,
-                    last_seen,
-                    args.read_timeout,
-                    args.stale_timeout,
-                )
-                targets, clamped = validate_positions(
-                    positions, math.radians(args.limit_tolerance_deg)
-                )
-                lock = viewer.lock() if viewer is not None else contextlib.nullcontext()
-                with lock:
-                    for motor_id, target in targets.items():
-                        data.ctrl[actuator_ids[motor_id]] = target
-                    mujoco.mj_step(model, data, nstep=sim_steps)
-                    if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
-                        raise RuntimeError("MuJoCo 상태에 NaN/inf")
-                if viewer is not None:
-                    viewer.sync()
-                if now - last_print >= 1.0:
-                    last_print = now
-                    print_status(data, qpos_addresses, positions, targets, clamped)
-                next_tick += period
-                sleep = next_tick - time.monotonic()
-                if sleep > 0.0:
-                    time.sleep(sleep)
-                elif time.monotonic() - next_tick > period:
-                    next_tick = time.monotonic()
+            print("\n수동 위치 반영을 시작합니다. 종료하려면 viewer를 닫거나 Ctrl-C를 누르세요.")
+            with viewer_context as viewer:
+                while viewer is None or viewer.is_running():
+                    now = time.monotonic()
+                    if args.duration is not None and now - start_time >= args.duration:
+                        break
+                    poll_positions(
+                        motors,
+                        groups,
+                        executor,
+                        positions,
+                        last_seen,
+                        args.read_timeout,
+                        args.stale_timeout,
+                    )
+                    targets, clamped = validate_positions(
+                        positions, limits, math.radians(args.limit_tolerance_deg)
+                    )
+                    lock = viewer.lock() if viewer is not None else contextlib.nullcontext()
+                    with lock:
+                        for motor_id, target in targets.items():
+                            data.ctrl[actuator_ids[motor_id]] = target
+                        mujoco.mj_step(model, data, nstep=sim_steps)
+                        if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
+                            raise RuntimeError("MuJoCo 상태에 NaN/inf")
+                    if viewer is not None:
+                        viewer.sync()
+                    if now - last_print >= 1.0:
+                        last_print = now
+                        print_status(data, qpos_addresses, positions, targets, clamped)
+                    next_tick += period
+                    sleep = next_tick - time.monotonic()
+                    if sleep > 0.0:
+                        time.sleep(sleep)
+                    elif time.monotonic() - next_tick > period:
+                        next_tick = time.monotonic()
     finally:
         if motors:
             stop_motors(motors, required=False)

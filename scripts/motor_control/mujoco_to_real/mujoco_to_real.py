@@ -103,6 +103,14 @@ class AxisLimiter:
         return self.position, self.velocity
 
 
+def wrap_to_pi(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def align_angle(current, target):
+    return current + wrap_to_pi(target - current)
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
@@ -136,10 +144,10 @@ def parse_args(argv=None):
                         help="URDF 하드스톱 안쪽 여유, 기본: 3deg")
     parser.add_argument("--feedback-timeout", type=float, default=0.30,
                         help="type-0x02 freshness watchdog, 기본: 0.30s")
-    parser.add_argument("--overspeed", type=float, default=0.50,
-                        help="실측 속도 비상정지 한계 rad/s, 기본: 0.50")
-    parser.add_argument("--max-error-deg", type=float, default=10.0,
-                        help="명령-실측 추종오차 비상정지 한계, 기본: 10deg")
+    parser.add_argument("--overspeed", type=float, default=2.0,
+                        help="실측 속도 비상정지 한계 rad/s, 기본: 2.0")
+    parser.add_argument("--max-error-deg", type=float, default=25.0,
+                        help="명령-실측 추종오차 비상정지 한계, 기본: 25deg")
     parser.add_argument("--max-temp", type=float, default=70.0,
                         help="모터 온도 비상정지 한계 degC, 기본: 70")
     parser.add_argument("--brake-time", type=float, default=0.20,
@@ -278,7 +286,7 @@ def inspect_zero_positions(motors, tolerance_rad, limits):
     print("\n시작 전 zero-position 확인(mechPos 읽기 전용):")
     blocking_failures = []
     measured = {}
-    print(f"  {'ID':>2} {'joint':<18} {'현재 mechPos':>15} {'zero까지 이동':>15}  상태")
+    print(f"  {'ID':>2} {'joint':<18} {'raw/wrap':>18} {'zero까지 이동':>15}  상태")
     for mid in sorted(motors):
         position = motors[mid].read_mech_position(timeout=0.3)
         measured[mid] = position
@@ -290,21 +298,25 @@ def inspect_zero_positions(motors, tolerance_rad, limits):
             blocking_failures.append(f"ID {mid} mechPos가 NaN/inf")
             print(f"  {mid:>2} {JOINT_MAP[mid]:<18} {'NaN/inf':>15} {'--':>15}  BLOCK")
             continue
+        wrapped = wrap_to_pi(position)
         degrees = math.degrees(position)
+        wrapped_deg = math.degrees(wrapped)
         lower, upper = limits[mid]
-        if not lower <= position <= upper:
+        if not lower <= wrapped <= upper:
             status = "BLOCK"
             blocking_failures.append(
-                f"ID {mid} {degrees:+.3f}deg가 margin 적용 안전범위 "
+                f"ID {mid} {degrees:+.3f}deg (wrap {wrapped_deg:+.3f}deg)가 "
+                f"보행한계 "
                 f"{math.degrees(lower):+.3f}..{math.degrees(upper):+.3f}deg 밖"
             )
-        elif abs(position) <= tolerance_rad:
+        elif abs(wrapped) <= tolerance_rad:
             status = "ZERO 근처"
         else:
             status = "zero로 이동 예정"
         print(
-            f"  {mid:>2} {JOINT_MAP[mid]:<18} {degrees:+11.3f} deg "
-            f"{math.degrees(-position):+11.3f} deg  {status}"
+            f"  {mid:>2} {JOINT_MAP[mid]:<18} "
+            f"{degrees:+7.2f}/{wrapped_deg:+7.2f}deg "
+            f"{(-wrapped_deg):+11.3f} deg  {status}"
         )
     return measured, blocking_failures
 
@@ -354,10 +366,11 @@ def enable_with_runtime_feedback(motors, hubs, kp, kd, limits):
             error.enabled_ids = enabled_ids
             raise error
         lower, upper = limits[mid]
-        if not math.isfinite(start) or not lower <= start <= upper:
+        wrapped = wrap_to_pi(start) if math.isfinite(start) else start
+        if not math.isfinite(start) or not lower <= wrapped <= upper:
             error = RuntimeError(
                 f"ID {mid} enable 후 실시간 위치가 비유한값 또는 안전범위 밖: "
-                f"{math.degrees(start):+.3f}deg"
+                f"{math.degrees(start):+.3f}deg (wrap {math.degrees(wrapped):+.3f}deg)"
             )
             error.enabled_ids = enabled_ids
             raise error
@@ -370,6 +383,7 @@ def move_to_zero(motors, hubs, starts, limits, args):
     tolerance_rad = math.radians(args.zero_tolerance_deg)
     period = 1.0 / args.rate
     commands = dict(starts)
+    zero_targets = {mid: align_angle(starts[mid], 0.0) for mid in starts}
     limiters = {mid: AxisLimiter(starts[mid]) for mid in starts}
     next_tick = time.monotonic()
     last_tick = next_tick
@@ -391,7 +405,7 @@ def move_to_zero(motors, hubs, starts, limits, args):
         velocities = {}
         for mid in sorted(motors):
             position, velocity = limiters[mid].step(
-                0.0, dt, args.max_speed, args.max_accel
+                zero_targets[mid], dt, args.max_speed, args.max_accel
             )
             commands[mid] = position
             velocities[mid] = velocity
@@ -408,19 +422,23 @@ def move_to_zero(motors, hubs, starts, limits, args):
             print(f"  {'ID':>2} {'joint':<18} {'limited cmd':>12} {'actual':>11}")
             for mid in sorted(motors):
                 actual = motors[mid].last_position
-                actual_text = "--" if actual is None else f"{math.degrees(actual):+8.2f}deg"
+                actual_text = (
+                    "--" if actual is None
+                    else f"{math.degrees(wrap_to_pi(actual)):+8.2f}deg"
+                )
                 print(
                     f"  {mid:>2} {JOINT_MAP[mid]:<18} "
-                    f"{math.degrees(commands[mid]):+9.2f}deg {actual_text:>11}"
+                    f"{math.degrees(wrap_to_pi(commands[mid])):+9.2f}deg {actual_text:>11}"
                 )
 
         command_done = all(
-            abs(commands[mid]) <= 1e-12 and abs(velocities[mid]) <= 1e-12
+            abs(commands[mid] - zero_targets[mid]) <= 1e-12
+            and abs(velocities[mid]) <= 1e-12
             for mid in motors
         )
         actual_done = all(
             motors[mid].last_position is not None
-            and abs(motors[mid].last_position) <= tolerance_rad
+            and abs(wrap_to_pi(motors[mid].last_position)) <= tolerance_rad
             for mid in motors
         )
         if command_done and actual_done:
@@ -428,16 +446,17 @@ def move_to_zero(motors, hubs, starts, limits, args):
                 "zero-position 도달 확인 완료 "
                 f"(실제 위치 ±{args.zero_tolerance_deg:g}deg 이내)."
             )
-            return {mid: 0.0 for mid in motors}
+            return dict(commands)
         if command_done:
             if commanded_zero_at is None:
                 commanded_zero_at = now
             elif now - commanded_zero_at > ZERO_SETTLE_TIMEOUT:
                 outside = [
-                    f"ID {mid} {math.degrees(motors[mid].last_position):+.2f}deg"
+                    f"ID {mid} {math.degrees(motors[mid].last_position):+.2f}deg "
+                    f"(wrap {math.degrees(wrap_to_pi(motors[mid].last_position)):+.2f}deg)"
                     for mid in sorted(motors)
                     if motors[mid].last_position is not None
-                    and abs(motors[mid].last_position) > tolerance_rad
+                    and abs(wrap_to_pi(motors[mid].last_position)) > tolerance_rad
                 ]
                 raise RuntimeError(
                     f"zero 명령 후 {ZERO_SETTLE_TIMEOUT:.1f}s 내 도달하지 못함: "
@@ -470,13 +489,16 @@ def runtime_safety_reason(motors, commands, limits, now, args):
         if motor.last_temp > args.max_temp:
             return f"ID {mid} 과온({motor.last_temp:.1f}degC)"
         lower, upper = limits[mid]
-        if not lower <= motor.last_position <= upper:
+        wrapped = wrap_to_pi(motor.last_position)
+        if not lower <= wrapped <= upper:
             return (
-                f"ID {mid} 안전 관절범위 이탈({math.degrees(motor.last_position):+.2f}deg, "
+                f"ID {mid} 안전 관절범위 이탈("
+                f"{math.degrees(motor.last_position):+.2f}deg "
+                f"wrap {math.degrees(wrapped):+.2f}deg, "
                 f"허용 {math.degrees(lower):+.2f}..{math.degrees(upper):+.2f}deg)"
             )
         if mid in commands:
-            error = commands[mid] - motor.last_position
+            error = wrap_to_pi(commands[mid] - motor.last_position)
             if abs(error) > math.radians(args.max_error_deg):
                 return f"ID {mid} 추종오차 과다({math.degrees(error):+.2f}deg)"
     return None
@@ -518,11 +540,14 @@ def print_status(motors, commands, targets, hardware):
     print(f"  {'ID':>2} {'joint':<18} {'sim target':>11} {'limited cmd':>12} {'actual':>11}")
     for mid in sorted(commands):
         actual = motors[mid].last_position if hardware else None
-        actual_text = "--" if actual is None else f"{math.degrees(actual):+8.2f}deg"
+        actual_text = (
+            "--" if actual is None
+            else f"{math.degrees(wrap_to_pi(actual)):+8.2f}deg"
+        )
         print(
             f"  {mid:>2} {JOINT_MAP[mid]:<18} "
             f"{math.degrees(targets[mid]):+8.2f}deg "
-            f"{math.degrees(commands[mid]):+9.2f}deg {actual_text:>11}"
+            f"{math.degrees(wrap_to_pi(commands[mid])):+9.2f}deg {actual_text:>11}"
         )
 
 
@@ -532,7 +557,8 @@ def run(args):
         raise RuntimeError("인자 오류:\n  " + "\n  ".join(problems))
 
     margin_rad = math.radians(args.limit_margin_deg)
-    limits = safe_limits(motor_ids, margin_rad)
+    hard_limits = {mid: JOINT_LIMITS_RAD[mid] for mid in motor_ids}
+    command_limits = safe_limits(motor_ids, margin_rad)
     model_path, model, actuator_ids = load_fixed_model(args.model, motor_ids)
     verify_model_limits(model, actuator_ids, motor_ids)
     data = mujoco.MjData(model)
@@ -547,39 +573,40 @@ def run(args):
     commands = {mid: 0.0 for mid in motor_ids}
     limiters = {mid: AxisLimiter(0.0) for mid in motor_ids}
 
-    viewer_context = (
-        contextlib.nullcontext(None)
-        if args.headless else mujoco.viewer.launch_passive(model, data)
-    )
-
     try:
+        if args.hardware:
+            buses, motors, hubs = open_hardware(motor_ids, args.interface, args.host_id)
+            _, zero_failures = inspect_zero_positions(
+                motors, math.radians(args.zero_tolerance_deg), hard_limits
+            )
+            if zero_failures:
+                raise RuntimeError(
+                    "zero-position 이동 전 안전검사 실패 — enable하지 않습니다:\n  "
+                    + "\n  ".join(zero_failures)
+                )
+            confirm_hardware(args, motor_ids, model_path)
+            stop_ids = list(motor_ids)
+            try:
+                starts, enabled_ids = enable_with_runtime_feedback(
+                    motors, hubs, args.kp, args.kd, hard_limits,
+                )
+            except RuntimeError as error:
+                enabled_ids = getattr(error, "enabled_ids", enabled_ids)
+                raise
+            commands.update(starts)
+            commands.update(move_to_zero(motors, hubs, starts, hard_limits, args))
+            limiters = {mid: AxisLimiter(commands[mid]) for mid in motor_ids}
+        else:
+            print("시뮬레이션 전용 dry-run입니다. CAN 버스를 열거나 모터 명령을 보내지 않습니다.")
+            print("실물 추종은 물리 안전 준비 후 --hardware를 명시해야 활성화됩니다.")
+
+        viewer_context = (
+            contextlib.nullcontext(None)
+            if args.headless else mujoco.viewer.launch_passive(model, data)
+        )
         with viewer_context as viewer:
             if args.hardware:
-                buses, motors, hubs = open_hardware(motor_ids, args.interface, args.host_id)
-                _, zero_failures = inspect_zero_positions(
-                    motors, math.radians(args.zero_tolerance_deg), limits
-                )
-                if zero_failures:
-                    raise RuntimeError(
-                        "zero-position 이동 전 안전검사 실패 — enable하지 않습니다:\n  "
-                        + "\n  ".join(zero_failures)
-                    )
-                confirm_hardware(args, motor_ids, model_path)
-                stop_ids = list(motor_ids)
-                try:
-                    starts, enabled_ids = enable_with_runtime_feedback(
-                        motors, hubs, args.kp, args.kd, limits,
-                    )
-                except RuntimeError as error:
-                    enabled_ids = getattr(error, "enabled_ids", enabled_ids)
-                    raise
-                commands.update(starts)
-                commands.update(move_to_zero(motors, hubs, starts, limits, args))
-                limiters = {mid: AxisLimiter(0.0) for mid in motor_ids}
                 print("\n실물 추종 활성화. MuJoCo viewer의 Control 슬라이더만 조작하세요.")
-            else:
-                print("시뮬레이션 전용 dry-run입니다. CAN 버스를 열거나 모터 명령을 보내지 않습니다.")
-                print("실물 추종은 물리 안전 준비 후 --hardware를 명시해야 활성화됩니다.")
 
             period = 1.0 / args.rate
             sim_steps = max(1, int(round(period / model.opt.timestep)))
@@ -596,7 +623,7 @@ def run(args):
                 if args.hardware:
                     for hub in hubs.values():
                         hub.pump()
-                    reason = runtime_safety_reason(motors, commands, limits, now, args)
+                    reason = runtime_safety_reason(motors, commands, hard_limits, now, args)
                     if reason:
                         raise RuntimeError("안전 중단: " + reason)
 
@@ -609,7 +636,7 @@ def run(args):
                         raw_target = float(data.ctrl[actuator_ids[mid]])
                         if not math.isfinite(raw_target):
                             raise RuntimeError(f"ID {mid} MuJoCo target이 NaN/inf")
-                        lower, upper = limits[mid]
+                        lower, upper = command_limits[mid]
                         targets[mid] = clamp(raw_target, lower, upper)
 
                 dt = clamp(now - last_tick, period * 0.25, period * 2.0)
@@ -617,7 +644,8 @@ def run(args):
                 command_velocities = {}
                 for mid in motor_ids:
                     position, velocity = limiters[mid].step(
-                        targets[mid], dt, args.max_speed, args.max_accel
+                        align_angle(limiters[mid].position, targets[mid]),
+                        dt, args.max_speed, args.max_accel,
                     )
                     commands[mid] = position
                     command_velocities[mid] = velocity

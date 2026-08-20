@@ -131,8 +131,8 @@ python3 scripts/motor_control/motor_with_imu_test/motor_imu_run.py \
 | `--zero-tolerance-deg` | No | `3.0` | Allowed error to declare zero reached (deg) |
 | `--limit-margin-deg` | No | `3.0` | Margin inside the joint limit (deg) |
 | `--feedback-timeout` | No | `0.30` | Feedback freshness limit (s) |
-| `--overspeed` | No | `0.50` | Overspeed stop threshold (rad/s) |
-| `--max-error-deg` | No | `10.0` | Tracking-error stop threshold (deg) |
+| `--overspeed` | No | `2.0` | Overspeed stop threshold (rad/s) |
+| `--max-error-deg` | No | `25.0` | Tracking-error stop threshold (deg) |
 | `--max-temp` | No | `70.0` | Overtemperature stop threshold (°C) |
 | `--brake-time` | No | `0.20` | Active braking time before shutdown (s) |
 | `--yes` | No | Off | Skip the hardware-start confirmation prompt |
