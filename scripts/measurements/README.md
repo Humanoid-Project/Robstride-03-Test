@@ -188,16 +188,14 @@ python3 scripts/measurements/joint/read_joint_with_imu.py \
 
 ### `shutdown.py`
 
-파워 커넥터를 뽑기 전에 실행. can0/can1의 모터를 전부 짧게 감속(kd-only)시킨 뒤 disable(stop)하고, 각 모터가 실제로 Reset 상태로 들어갔는지 feedback으로 확인한다.
-
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
 | `--channels` | No | `can0 can1` | CAN channels to use |
-| `--ids` | No | 1~12 (선택한 채널 범위) | 대상 모터 ID |
+| `--ids` | No | `1~12` (from selected channels) | Target motor IDs |
 | `--interface` | No | `socketcan` | python-can interface |
 | `--host-id` | No | `0xFD` | Host CAN ID |
-| `--brake-time` | No | `0.3` | disable 전 감속 시간(초), `0`이면 즉시 disable |
-| `--kd` | No | `3.0` | 감속 구간 kd |
+| `--brake-time` | No | `0.3` | Braking time before disable (s); `0` disables immediately |
+| `--kd` | No | `3.0` | Damping gain during the braking phase |
 
 ```bash
 # Example
