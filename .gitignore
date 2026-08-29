@@ -16,3 +16,5 @@ scripts/measurements/joint/joint_limit/
 .codex/
 .claude/
 AGENTS.md
+
+docs/

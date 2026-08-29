@@ -232,6 +232,7 @@ python3 scripts/measurements/joint/scan_joint_limits.py --motor-id 5 6
 ### IMU
 
 ```bash
+# Example
 python3 scripts/measurements/noise/imu/imu_capture.py \
   --port /dev/ttyUSB0 \
   --duration 60 \
@@ -247,6 +248,7 @@ python3 scripts/measurements/noise/imu/analyze_imu_noise.py \
 - `type_0x11`: parameter-read command, e.g. `mechPos` (`0x7019`) / `mechVel` (`0x701B`).
 
 ```bash
+# Example
 python3 scripts/measurements/noise/can/can_capture.py --duration 10
 
 python3 scripts/measurements/noise/can/analyze_can_noise.py \
