@@ -1,0 +1,39 @@
+cmake_minimum_required(VERSION 3.16)
+project(robonex_comm_test LANGUAGES CXX)
+
+include(CTest)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# Keep the N100 SDK self-contained so this directory can later become a repo.
+add_subdirectory(n100_cpp)
+
+find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+
+# Resolve pybind11 from the interpreter that will import the built module.
+if(NOT pybind11_DIR)
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
+    OUTPUT_VARIABLE PYBIND11_CMAKE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE PYBIND11_QUERY_RESULT
+    ERROR_QUIET)
+  if(NOT PYBIND11_QUERY_RESULT EQUAL 0)
+    message(FATAL_ERROR
+      "pybind11 not found for ${Python3_EXECUTABLE}.\n"
+      "Activate the venv and run: pip install -r requirements.txt")
+  endif()
+  set(pybind11_DIR "${PYBIND11_CMAKE_DIR}")
+endif()
+find_package(pybind11 CONFIG REQUIRED)
+
+# The SDK library already owns target name n100, so use a distinct CMake target
+# and rename only the resulting Python extension.
+pybind11_add_module(n100_python n100_binding.cpp)
+target_link_libraries(n100_python PRIVATE n100::n100)
+target_compile_options(n100_python PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(n100_python PROPERTIES
+  OUTPUT_NAME n100
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")

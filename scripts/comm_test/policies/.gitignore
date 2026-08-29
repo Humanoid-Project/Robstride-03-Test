@@ -1,0 +1,3 @@
+# Keep policy binaries local while retaining this directory in Git.
+*
+!.gitignore
