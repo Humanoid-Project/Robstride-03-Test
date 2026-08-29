@@ -1,4 +1,4 @@
-// Python bindings for the N100 IMU SDK in n100_cpp/.
+// Python bindings for the N100 IMU SDK.
 //
 // The reader thread stays in C++ and never calls back into Python, so it runs
 // free of the GIL. Every call that can block (stop, wait_for_sample,
@@ -46,7 +46,7 @@ std::string quatRepr(const n100::Quat& q) {
 }  // namespace
 
 PYBIND11_MODULE(n100, m) {
-  m.doc() = "WHEELTEC N100 IMU driver (bindings over n100_cpp/)";
+  m.doc() = "WHEELTEC N100 IMU driver";
 
   py::class_<n100::Vec3>(m, "Vec3")
       .def(py::init<>())

@@ -8,62 +8,40 @@ import time
 
 import can
 
-HOST_ID = 0xFD
-DEFAULT_INTERFACE = "socketcan"
-MECH_POS_INDEX = 0x7019
+from robonex_common.joints import ACTUATED_JOINTS, CHANNEL_MOTOR_IDS
+from robonex_common.protocol import (
+    COMM_PARAMETER_READ,
+    DEFAULT_INTERFACE,
+    HOST_ID,
+    MECHANICAL_POSITION_INDEX,
+    build_arbitration_id,
+    parse_arbitration_id,
+)
+
 ONESHOT_TIMEOUT = 0.1
 WATCH_TIMEOUT = 0.02
-
-CHANNEL_MOTOR_IDS = {
-    "can0": [1, 2, 3, 4, 5, 6],
-    "can1": [7, 8, 9, 10, 11, 12],
-}
-
-JOINT_MAP = {
-    1:  "left_hip_yaw",
-    2:  "left_hip_pitch",
-    3:  "left_hip_roll",
-    4:  "left_knee_pitch",
-    5:  "left_ankle_upper",
-    6:  "left_ankle_lower",
-    7:  "right_hip_yaw",
-    8:  "right_hip_pitch",
-    9:  "right_hip_roll",
-    10: "right_knee_pitch",
-    11: "right_ankle_upper",
-    12: "right_ankle_lower",
-}
-
-
-def build_arb(comm_type, data16, target_id):
-    return ((comm_type & 0x1F) << 24) | ((data16 & 0xFFFF) << 8) | (target_id & 0xFF)
-
-
-def parse_arb(arbitration_id):
-    comm_type = (arbitration_id >> 24) & 0x1F
-    data16 = (arbitration_id >> 8) & 0xFFFF
-    destination = arbitration_id & 0xFF
-    return comm_type, data16, destination
+JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 
 
 def read_mech_position(bus, host_id, motor_id, timeout=0.1):
     data = bytearray(8)
-    struct.pack_into("<H", data, 0, MECH_POS_INDEX)
-    bus.send(can.Message(arbitration_id=build_arb(0x11, host_id, motor_id),
-                         data=bytes(data), is_extended_id=True))
+    struct.pack_into("<H", data, 0, MECHANICAL_POSITION_INDEX)
+    bus.send(can.Message(
+        arbitration_id=build_arbitration_id(COMM_PARAMETER_READ, host_id, motor_id),
+        data=bytes(data), is_extended_id=True))
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         msg = bus.recv(timeout=max(0.0, deadline - time.monotonic()))
         if msg is None or not msg.is_extended_id:
             continue
-        comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        if comm_type != 0x11 or destination != host_id or (data16 & 0xFF) != motor_id:
+        comm_type, data16, destination = parse_arbitration_id(msg.arbitration_id)
+        if comm_type != COMM_PARAMETER_READ or destination != host_id or (data16 & 0xFF) != motor_id:
             continue
         payload = bytes(msg.data)
         if len(payload) < 8:
             continue
-        if int.from_bytes(payload[0:2], "little") != MECH_POS_INDEX:
+        if int.from_bytes(payload[0:2], "little") != MECHANICAL_POSITION_INDEX:
             continue
         return struct.unpack_from("<f", payload, 4)[0]
     return None
@@ -104,7 +82,7 @@ def poll_worker(channel, interface, host_id, timeout, state, rate, notes, lock, 
         bus = can.Bus(channel=channel, interface=interface)
     except OSError as e:
         with lock:
-            notes.append(f"[{channel}] 열기 실패: {e}  "
+            notes.append(f"[{channel}] open failed: {e}  "
                          f"(sudo ip link set {channel} up type can bitrate 1000000)")
         return
 
@@ -123,7 +101,7 @@ def poll_worker(channel, interface, host_id, timeout, state, rate, notes, lock, 
                 t0, cnt = now, 0
     except can.CanError as e:
         with lock:
-            notes.append(f"[{channel}] CAN 오류: {e}")
+            notes.append(f"[{channel}] CAN error: {e}")
     finally:
         bus.shutdown()
 
@@ -152,7 +130,7 @@ def watch_channels(channels, interface, host_id, timeout, interval):
             hz = "   ".join(f"{ch} {rt[ch]:6.1f} Hz" for ch in channels)
             out = ["\033[2J\033[3J\033[H"]
             out.append(f"joint monitor   {hz}   {time.strftime('%H:%M:%S')}"
-                       f"    (Ctrl-C 종료)\n")
+                       f"    (Ctrl-C to quit)\n")
             for channel in channels:
                 out.append(f"[{channel}]")
                 out.append(f"  {'ID':>3}  {'joint':<18}  {'position':>26}")
@@ -174,21 +152,21 @@ def watch_channels(channels, interface, host_id, timeout, interval):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="채널별로 지정한 모터 ID들의 현재 관절값(기계각)을 출력한다.")
-    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS.keys()),
-                        choices=list(CHANNEL_MOTOR_IDS.keys()),
-                        help=f"확인할 CAN 채널들, 기본값: {' '.join(CHANNEL_MOTOR_IDS.keys())}")
+        description="Print mechanical joint angles for the selected motor IDs.")
+    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS),
+                        choices=list(CHANNEL_MOTOR_IDS),
+                        help=f"CAN channels. Default: {' '.join(CHANNEL_MOTOR_IDS)}")
     parser.add_argument("--interface", default=DEFAULT_INTERFACE,
-                        help="python-can 인터페이스, 기본값: socketcan")
+                        help="python-can interface")
     parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID,
-                        help="호스트 CAN ID, 기본값: 0xFD")
+                        help="Host CAN ID")
     parser.add_argument("--timeout", type=float, default=None,
-                        help=f"모터당 응답 대기 시간(초), 기본값: {ONESHOT_TIMEOUT} "
-                             f"(--watch 시 {WATCH_TIMEOUT})")
+                        help=f"Per-motor reply wait in seconds. Default: {ONESHOT_TIMEOUT} "
+                             f"({WATCH_TIMEOUT} with --watch)")
     parser.add_argument("--watch", action="store_true",
-                        help="한 번만 출력하지 않고 실시간으로 계속 갱신")
+                        help="Keep refreshing instead of printing once")
     parser.add_argument("--interval", type=float, default=0.1,
-                        help="--watch 시 화면 갱신 주기(초), 기본값: 0.1")
+                        help="Screen refresh period with --watch, seconds")
     return parser.parse_args()
 
 

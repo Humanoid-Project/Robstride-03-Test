@@ -7,8 +7,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-# Keep the N100 SDK self-contained so this directory can later become a repo.
-add_subdirectory(n100_cpp)
+set(IMU_N100_TEST_ROOT "" CACHE PATH "IMU_N100_Test checkout")
+if(NOT IMU_N100_TEST_ROOT AND DEFINED ENV{IMU_N100_TEST_ROOT})
+  set(IMU_N100_TEST_ROOT "$ENV{IMU_N100_TEST_ROOT}")
+endif()
+if(NOT IMU_N100_TEST_ROOT)
+  get_filename_component(IMU_N100_TEST_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../IMU_N100_Test" ABSOLUTE)
+endif()
+set(N100_CPP_DIR "${IMU_N100_TEST_ROOT}/src/cpp_n100")
+if(NOT EXISTS "${N100_CPP_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR "IMU_N100_Test SDK not found: ${N100_CPP_DIR}")
+endif()
+add_subdirectory("${N100_CPP_DIR}" "${CMAKE_BINARY_DIR}/n100_cpp")
 
 find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
 

@@ -11,8 +11,7 @@ motor_control/
 └── motor_with_imu_test/
     ├── CMakeLists.txt
     ├── motor_imu_run.py
-    ├── n100_binding.cpp
-    └── n100_cpp/
+    └── n100_binding.cpp
 ```
 
 <br>

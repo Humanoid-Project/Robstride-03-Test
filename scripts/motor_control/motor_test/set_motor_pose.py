@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import math
-import struct
 import sys
 import time
 
 import can
-
-HOST_ID = 0xFD
-DEFAULT_INTERFACE = "socketcan"
-
-RUN_MODE_INDEX = 0x7005
-OPERATION_RUN_MODE = 0
-MECH_POS_INDEX = 0x7019
+from robonex_common.can import FeedbackHub, Motor
+from robonex_common.joints import ACTUATED_JOINTS
+from robonex_common.motors import MOTOR_SPECS
+from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID, clamp
 
 CHANNEL_ID_RANGES = {
     "can0": range(1, 7),
@@ -20,18 +16,18 @@ CHANNEL_ID_RANGES = {
 }
 
 MOTORS = {
-    1:  {"target_rad": +0.0119, "model": "rs02"},
-    2:  {"target_rad": +0.4013, "model": "rs03"},
-    3:  {"target_rad": -0.1473, "model": "rs03"},
-    4:  {"target_rad": -0.5475, "model": "rs03"},
-    5:  {"target_rad": +0.0000, "model": "rs02"},
-    6:  {"target_rad": +0.0000, "model": "rs02"},
-    7:  {"target_rad": +0.0016, "model": "rs02"},
-    8:  {"target_rad": -0.6227, "model": "rs03"},
-    9:  {"target_rad": +0.0114, "model": "rs03"},
-    10: {"target_rad": +0.7454, "model": "rs03"},
-    11: {"target_rad": +0.0000, "model": "rs02"},
-    12: {"target_rad": +0.0001, "model": "rs02"},
+    1: {"target_rad": 0.0119, "model": "rs02"},
+    2: {"target_rad": 0.4013, "model": "rs03"},
+    3: {"target_rad": -0.1473, "model": "rs03"},
+    4: {"target_rad": -0.5475, "model": "rs03"},
+    5: {"target_rad": 0.0, "model": "rs02"},
+    6: {"target_rad": 0.0, "model": "rs02"},
+    7: {"target_rad": 0.0016, "model": "rs02"},
+    8: {"target_rad": -0.6227, "model": "rs03"},
+    9: {"target_rad": 0.0114, "model": "rs03"},
+    10: {"target_rad": 0.7454, "model": "rs03"},
+    11: {"target_rad": 0.0, "model": "rs02"},
+    12: {"target_rad": 0.0001, "model": "rs02"},
 }
 
 MOVE_SPEED = 0.4
@@ -41,174 +37,15 @@ HOLD_KP = 40.0
 HOLD_KD = 2.0
 OVERSPEED_STOP = 2.0
 FEEDBACK_TIMEOUT = 0.3
-
-JOINT_MAP = {
-    1: "left_hip_yaw", 2: "left_hip_pitch", 3: "left_hip_roll",
-    4: "left_knee_pitch", 5: "left_ankle_upper", 6: "left_ankle_lower",
-    7: "right_hip_yaw", 8: "right_hip_pitch", 9: "right_hip_roll",
-    10: "right_knee_pitch", 11: "right_ankle_upper", 12: "right_ankle_lower",
-}
+SPECS = MOTOR_SPECS
+JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 
 
 def channel_for_id(motor_id):
     for channel, id_range in CHANNEL_ID_RANGES.items():
         if motor_id in id_range:
             return channel
-    raise ValueError(f"모터 ID {motor_id} 에 대한 채널을 찾을 수 없습니다 (CHANNEL_ID_RANGES 확인).")
-
-
-class MotorSpec:
-    def __init__(self, name, p_min, p_max, v_min, v_max, t_min, t_max, kp_max, kd_max):
-        self.name = name
-        self.p_min, self.p_max = p_min, p_max
-        self.v_min, self.v_max = v_min, v_max
-        self.t_min, self.t_max = t_min, t_max
-        self.kp_max, self.kd_max = kp_max, kd_max
-
-
-SPECS = {
-    "rs03": MotorSpec("RS03", -12.57, 12.57, -20.0, 20.0, -60.0, 60.0, 5000.0, 100.0),
-    "rs02": MotorSpec("RS02", -12.57, 12.57, -44.0, 44.0, -17.0, 17.0, 500.0, 5.0),
-}
-
-
-def clamp(value, lo, hi):
-    return max(lo, min(hi, value))
-
-
-def float_to_uint(x, x_min, x_max, bits):
-    x = clamp(x, x_min, x_max)
-    return int((x - x_min) / (x_max - x_min) * ((1 << bits) - 1))
-
-
-def build_arb(comm_type, data16, target_id):
-    return ((comm_type & 0x1F) << 24) | ((data16 & 0xFFFF) << 8) | (target_id & 0xFF)
-
-
-def parse_arb(arbitration_id):
-    comm_type = (arbitration_id >> 24) & 0x1F
-    data16 = (arbitration_id >> 8) & 0xFFFF
-    destination = arbitration_id & 0xFF
-    return comm_type, data16, destination
-
-
-class Motor:
-    def __init__(self, bus, motor_id, spec, host_id=HOST_ID):
-        self.bus = bus
-        self.motor_id = motor_id
-        self.spec = spec
-        self.host_id = host_id
-        self.last_velocity = 0.0
-        self.last_position = None
-        self.last_torque = 0.0
-        self.last_temp = 0.0
-        self.last_feedback_time = 0.0
-
-    def _send(self, comm_type, data16, data):
-        self.bus.send(can.Message(arbitration_id=build_arb(comm_type, data16, self.motor_id),
-                                  data=bytes(data), is_extended_id=True))
-
-    def read_mech_position(self, timeout=0.2):
-        data = bytearray(8)
-        struct.pack_into("<H", data, 0, MECH_POS_INDEX)
-        self._send(0x11, self.host_id, data)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            msg = self.bus.recv(timeout=max(0.0, deadline - time.monotonic()))
-            if msg is None or not msg.is_extended_id:
-                continue
-            comm_type, data16, destination = parse_arb(msg.arbitration_id)
-            if comm_type != 0x11 or destination != self.host_id or (data16 & 0xFF) != self.motor_id:
-                continue
-            payload = bytes(msg.data)
-            if len(payload) >= 8 and int.from_bytes(payload[0:2], "little") == MECH_POS_INDEX:
-                return struct.unpack_from("<f", payload, 4)[0]
-        return None
-
-    def write_run_mode_operation(self):
-        data = bytearray(8)
-        struct.pack_into("<H", data, 0, RUN_MODE_INDEX)
-        data[4] = OPERATION_RUN_MODE & 0xFF
-        self._send(0x12, self.host_id, data)
-
-    def enable(self):
-        self._send(0x03, self.host_id, bytes(8))
-
-    def stop(self, clear_fault=False):
-        data = bytearray(8)
-        if clear_fault:
-            data[0] = 1
-        self._send(0x04, self.host_id, data)
-
-    def control(self, pos, vel, kp, kd, torque=0.0):
-        s = self.spec
-        data16 = float_to_uint(torque, s.t_min, s.t_max, 16)
-        raw_pos = float_to_uint(pos, s.p_min, s.p_max, 16)
-        raw_vel = float_to_uint(vel, s.v_min, s.v_max, 16)
-        raw_kp = float_to_uint(kp, 0.0, s.kp_max, 16)
-        raw_kd = float_to_uint(kd, 0.0, s.kd_max, 16)
-        data = bytes([
-            (raw_pos >> 8) & 0xFF, raw_pos & 0xFF,
-            (raw_vel >> 8) & 0xFF, raw_vel & 0xFF,
-            (raw_kp >> 8) & 0xFF, raw_kp & 0xFF,
-            (raw_kd >> 8) & 0xFF, raw_kd & 0xFF,
-        ])
-        self._send(0x01, data16, data)
-
-    def ingest_feedback(self, data, now=None):
-        s = self.spec
-        if len(data) < 8:
-            return
-        raw_pos = (data[0] << 8) | data[1]
-        raw_vel = (data[2] << 8) | data[3]
-        raw_torque = (data[4] << 8) | data[5]
-        raw_temp = (data[6] << 8) | data[7]
-        self.last_position = raw_pos / 65535.0 * (s.p_max - s.p_min) + s.p_min
-        self.last_velocity = raw_vel / 65535.0 * (s.v_max - s.v_min) + s.v_min
-        self.last_torque = raw_torque / 65535.0 * (s.t_max - s.t_min) + s.t_min
-        self.last_temp = raw_temp / 10.0
-        self.last_feedback_time = time.monotonic() if now is None else now
-
-
-class FeedbackHub:
-
-
-    def __init__(self, bus, motors, host_id):
-        self.bus = bus
-        self.motors = {m.motor_id: m for m in motors}
-        self.host_id = host_id
-
-    def _route(self, msg, now):
-        if not msg.is_extended_id:
-            return None
-        comm_type, data16, destination = parse_arb(msg.arbitration_id)
-        if comm_type != 0x02 or destination != self.host_id:
-            return None
-        motor = self.motors.get(data16 & 0xFF)
-        if motor is not None:
-            motor.ingest_feedback(bytes(msg.data), now)
-        return motor
-
-    def pump(self, max_frames=512):
-        now = time.monotonic()
-        for _ in range(max_frames):
-            msg = self.bus.recv(timeout=0.0)
-            if msg is None:
-                return
-            self._route(msg, now)
-
-    def wait_for(self, motor_id, timeout):
-        deadline = time.monotonic() + timeout
-        target = self.motors.get(motor_id)
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            msg = self.bus.recv(timeout=remaining)
-            if msg is None:
-                return None
-            if self._route(msg, time.monotonic()) is target and target is not None:
-                return target.last_position
+    raise ValueError(f"No CAN channel for motor ID {motor_id}")
 
 
 def fmt(rad):
@@ -217,18 +54,18 @@ def fmt(rad):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="모터들을 목표각으로 천천히 이동시킨 뒤 종료 시까지 위치를 유지한다.")
+        description="Move motors slowly to target angles and hold until stopped.")
     parser.add_argument("--channels", nargs="+", default=list(CHANNEL_ID_RANGES.keys()),
                         choices=list(CHANNEL_ID_RANGES.keys()),
-                        help=f"사용할 CAN 채널들, 기본값: {' '.join(CHANNEL_ID_RANGES.keys())}")
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can 인터페이스")
-    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="호스트 CAN ID")
-    parser.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 바로 시작")
+                        help=f"CAN channels. Default: {' '.join(CHANNEL_ID_RANGES.keys())}")
+    parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can interface")
+    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="Host CAN ID")
+    parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     args = parser.parse_args()
 
     active_motor_ids = [mid for mid in MOTORS if channel_for_id(mid) in args.channels]
     if not active_motor_ids:
-        print("선택된 채널에 해당하는 모터가 MOTORS 설정에 없습니다.")
+        print("No configured motor uses the selected channels.")
         return 1
 
     buses = {}
@@ -259,8 +96,8 @@ def main():
         }
         hub_of = {mid: hubs[channel_for_id(mid)] for mid in motors}
 
-        print(f"채널 {', '.join(needed_channels)} 에서 현재 위치 확인 중...\n")
-        print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'model':<5}  {'현재각':>26}  {'목표각':>26}")
+        print(f"Reading current positions on {', '.join(needed_channels)}...\n")
+        print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'model':<5}  {'current':>26}  {'target':>26}")
         print("-" * 104)
         move_time = MIN_MOVE_TIME
         for motor_id, m in motors.items():
@@ -268,47 +105,47 @@ def main():
             channel = channel_for_id(motor_id)
             if current is None:
                 print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  "
-                      f"{m['motor'].spec.name:<5}  {'무응답':>26}")
-                print(f"\n오류: 모터 ID {motor_id} 가 응답하지 않음. 배선/ID/전원을 확인하세요. 중단합니다.")
+                      f"{m['motor'].spec.name:<5}  {'no response':>26}")
+                print(f"\nMotor ID {motor_id} did not respond. Check power, wiring, and ID.")
                 return 1
             target = current if m["target_cfg"] is None else m["target_cfg"]
             m["target"] = clamp(target, m["motor"].spec.p_min, m["motor"].spec.p_max)
             travel = abs(m["target"] - current)
             move_time = max(move_time, travel / MOVE_SPEED)
-            note = "" if m["target_cfg"] is not None else "  (목표 미설정: 현재 위치 유지)"
+            note = "" if m["target_cfg"] is not None else "  (no target: hold current position)"
             print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  "
                   f"{m['motor'].spec.name:<5}  {fmt(current):>26}  {fmt(m['target']):>26}{note}")
 
-        print(f"\n이동 시간: 약 {move_time:.1f} 초 (속도 {MOVE_SPEED} rad/s), "
-              f"유지 강성 kp={HOLD_KP}, kd={HOLD_KD}")
+        print(f"\nMove time: about {move_time:.1f} s at {MOVE_SPEED} rad/s, "
+              f"hold gains kp={HOLD_KP}, kd={HOLD_KD}")
 
         if not args.yes:
             if not sys.stdin.isatty():
-                print("확인 입력이 필요합니다. --yes 로 실행하거나 대화형 터미널에서 실행하세요.")
+                print("Confirmation requires an interactive terminal or --yes.")
                 return 1
             try:
-                answer = input("\n시작하려면 Enter, 취소하려면 Ctrl-C: ")
+                answer = input("\nPress Enter to start, or Ctrl-C to cancel: ")
                 del answer
             except (KeyboardInterrupt, EOFError):
-                print("\n취소됨.")
+                print("\nCancelled.")
                 return 0
 
         def emergency_stop(reason):
-            print(f"\n비상정지: {reason}")
+            print(f"\nEmergency stop: {reason}")
             for mm in motors.values():
                 try:
                     mm["motor"].stop()
                 except can.CanError:
                     pass
 
-        print("\nEnable 중...")
+        print("\nEnabling...")
         for motor_id, m in motors.items():
             m["motor"].write_run_mode_operation()
             time.sleep(0.005)
             m["motor"].enable()
             start = hub_of[motor_id].wait_for(motor_id, timeout=0.3)
             if start is None:
-                emergency_stop(f"ID {m['motor'].motor_id} 실시간 피드백 없음")
+                emergency_stop(f"ID {m['motor'].motor_id} has no live feedback")
                 return 1
             m["start"] = start
             if m["target_cfg"] is None:
@@ -326,15 +163,15 @@ def main():
             for mid, mm in motors.items():
                 motor = mm["motor"]
                 if abs(motor.last_velocity) > OVERSPEED_STOP:
-                    return f"ID {mid} 과속 ({motor.last_velocity:+.2f} rad/s)"
+                    return f"ID {mid} overspeed ({motor.last_velocity:+.2f} rad/s)"
                 if motor.last_feedback_time <= 0.0:
-                    return f"ID {mid} 피드백을 한 번도 못 받음"
+                    return f"ID {mid} never received feedback"
                 age = now - motor.last_feedback_time
                 if age > FEEDBACK_TIMEOUT:
-                    return (f"ID {mid} 피드백 끊김 ({age:.2f}s 무응답, 한계 {FEEDBACK_TIMEOUT}s)")
+                    return f"ID {mid} feedback timeout ({age:.2f} s > {FEEDBACK_TIMEOUT} s)"
             return None
 
-        print(f"이동 시작 ({move_time:.1f}s)...")
+        print(f"Starting move ({move_time:.1f} s)...")
         start_time = time.monotonic()
         while True:
             now = time.monotonic()
@@ -360,7 +197,7 @@ def main():
             if sleep > 0:
                 time.sleep(sleep)
 
-        print("\n목표 위치 도달. 이제 위치를 유지합니다. 종료하려면 Ctrl-C.\n")
+        print("\nTargets reached. Holding position. Press Ctrl-C to stop.\n")
         last_print = 0.0
         while True:
             now = time.monotonic()
@@ -374,16 +211,15 @@ def main():
                 return 1
             if now - last_print >= 1.0:
                 last_print = now
-                print(f"[{time.strftime('%H:%M:%S')}] 위치 유지 중 "
-                      f"(오차 큰 축 = 토크 부족/포화 의심)")
-                print(f"  {'ID':>3} {'joint':<16} {'현재→목표(deg)':>20} "
-                      f"{'오차(deg)':>10} {'토크(N·m)':>18} {'온도':>6}")
+                print(f"[{time.strftime('%H:%M:%S')}] Holding position")
+                print(f"  {'ID':>3} {'joint':<16} {'current→target deg':>20} "
+                      f"{'error deg':>10} {'torque N·m':>18} {'temp':>6}")
                 for mid, m in motors.items():
                     mm = m["motor"]
                     tmax = mm.spec.t_max
                     cur = mm.last_position
                     if cur is None:
-                        line = f"  {mid:>3} {JOINT_MAP.get(mid, '?'):<16} {'(피드백 없음)':>20}"
+                        line = f"  {mid:>3} {JOINT_MAP.get(mid, '?'):<16} {'(no feedback)':>20}"
                     else:
                         err = math.degrees(m["target"] - cur)
                         tq_pct = abs(mm.last_torque) / tmax * 100.0 if tmax else 0.0
@@ -399,7 +235,7 @@ def main():
                 time.sleep(sleep)
 
     except KeyboardInterrupt:
-        print("\n\n종료 요청됨. 모터 정지 중...")
+        print("\n\nStop requested. Stopping motors...")
     finally:
         for m in motors.values():
             try:
@@ -408,7 +244,7 @@ def main():
                 pass
         for bus in buses.values():
             bus.shutdown()
-        print("정지 완료.")
+        print("Stopped.")
     return 0
 
 

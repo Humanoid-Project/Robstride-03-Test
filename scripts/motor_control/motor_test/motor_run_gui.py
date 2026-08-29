@@ -11,7 +11,20 @@ from tkinter import messagebox, ttk
 
 import can
 
-HOST_ID = 0xFD
+from robonex_common.motors import MOTOR_SPECS
+from robonex_common.protocol import (
+    HOST_ID,
+    MECHANICAL_POSITION_INDEX,
+    RUN_MODE_INDEX,
+    RUN_MODE_OPERATION,
+    VBUS_INDEX,
+    build_arbitration_id,
+    clamp,
+    float_to_uint,
+    parse_arbitration_id,
+    uint_to_float,
+)
+
 DEFAULT_MOTOR_ID = 5
 DEFAULT_CHANNEL = "can0"
 DEFAULT_INTERFACE = "socketcan"
@@ -31,41 +44,11 @@ SAFE_MAX_RETURN_KD = 5.0
 SAFE_OVERSPEED_STOP = 2.0
 SAFE_CLOSE_TIMEOUT = 90.0
 
-VBUS_INDEX = 0x701C
-MECH_POS_INDEX = 0x7019
-RUN_MODE_INDEX = 0x7005
-OPERATION_RUN_MODE = 0
+MECH_POS_INDEX = MECHANICAL_POSITION_INDEX
+OPERATION_RUN_MODE = RUN_MODE_OPERATION
 
-class MotorSpec:
-    def __init__(self, name, p_min, p_max, v_min, v_max, t_min, t_max, kp_max, kd_max):
-        self.name = name
-        self.p_min = p_min
-        self.p_max = p_max
-        self.v_min = v_min
-        self.v_max = v_max
-        self.t_min = t_min
-        self.t_max = t_max
-        self.kp_max = kp_max
-        self.kd_max = kd_max
-
-RS03_SPEC = MotorSpec("RS03", -12.57, 12.57, -20.0, 20.0, -60.0, 60.0, kp_max=5000.0, kd_max=100.0)
-RS02_SPEC = MotorSpec("RS02", -12.57, 12.57, -44.0, 44.0, -17.0, 17.0, kp_max=500.0, kd_max=5.0)
-
-def clamp(value, min_value, max_value):
-    return max(min_value, min(max_value, value))
-
-def float_to_uint(x, x_min, x_max, bits):
-    x = max(x_min, min(x_max, x))
-    return int((x - x_min) / (x_max - x_min) * ((1 << bits) - 1))
-
-def uint_to_float(x, x_min, x_max, bits):
-    return x / ((1 << bits) - 1) * (x_max - x_min) + x_min
-
-def parse_arbitration_id(arbitration_id):
-    comm_type = (arbitration_id >> 24) & 0x1F
-    data16 = (arbitration_id >> 8) & 0xFFFF
-    destination = arbitration_id & 0xFF
-    return comm_type, data16, destination
+RS03_SPEC = MOTOR_SPECS["rs03"]
+RS02_SPEC = MOTOR_SPECS["rs02"]
 
 def parse_feedback(msg, host_id, motor_id, spec):
     if msg is None or not msg.is_extended_id:
@@ -115,7 +98,7 @@ def parse_float_parameter(msg, host_id, motor_id, index):
 
     return struct.unpack_from("<f", data, 4)[0]
 
-class Motor:
+class GuiMotor:
     def __init__(self, bus, motor_id, host_id, spec):
         self.bus = bus
         self.motor_id = motor_id
@@ -123,7 +106,7 @@ class Motor:
         self.spec = spec
 
     def send(self, comm_type, data16, data):
-        arb_id = ((comm_type & 0x1F) << 24) | ((data16 & 0xFFFF) << 8) | self.motor_id
+        arb_id = build_arbitration_id(comm_type, data16, self.motor_id)
         msg = can.Message(arbitration_id=arb_id, data=list(data), is_extended_id=True)
         self.bus.send(msg)
 
@@ -605,7 +588,7 @@ class MotorController(threading.Thread):
         self.stop_event.set()
 
     def make_motor(self, bus):
-        return Motor(bus=bus, motor_id=self.args.motor_id, host_id=self.args.host_id, spec=self.spec)
+        return GuiMotor(bus=bus, motor_id=self.args.motor_id, host_id=self.args.host_id, spec=self.spec)
 
     def run(self):
         bus = None

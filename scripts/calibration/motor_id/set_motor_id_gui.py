@@ -9,11 +9,21 @@ from tkinter import messagebox, ttk
 
 import can
 
-HOST_ID = 0xFD
-DEVICE_ID_DESTINATION = 0xFE
+from robonex_common.protocol import (
+    COMM_DEVICE_ID,
+    COMM_PARAMETER_READ,
+    COMM_SET_CAN_ID,
+    COMM_STOP,
+    DEFAULT_INTERFACE,
+    DEVICE_ID_DESTINATION,
+    HOST_ID,
+    MECHANICAL_POSITION_INDEX,
+    build_arbitration_id,
+    parse_arbitration_id,
+)
+
 DEFAULT_CHANNEL = "can0"
-DEFAULT_INTERFACE = "socketcan"
-MECH_POS_INDEX = 0x7019
+MECH_POS_INDEX = MECHANICAL_POSITION_INDEX
 
 MIN_CURRENT_ID = 0
 MIN_NEW_ID = 1
@@ -27,31 +37,25 @@ def parse_scan_max(value):
     try:
         scan_max = int(value, 0)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("scan-max는 숫자여야 합니다.") from exc
+        raise argparse.ArgumentTypeError("scan-max must be a number.") from exc
     if not MIN_CURRENT_ID <= scan_max <= MAX_MOTOR_ID:
         raise argparse.ArgumentTypeError(
-            f"scan-max는 {MIN_CURRENT_ID}~{MAX_MOTOR_ID} 범위여야 합니다."
+            f"scan-max must be {MIN_CURRENT_ID}-{MAX_MOTOR_ID}."
         )
     return scan_max
 
 def build_arb_set_id(new_id, host_id, target_id):
     data16 = ((new_id & 0xFF) << 8) | (host_id & 0xFF)
-    return (0x07 << 24) | ((data16 & 0xFFFF) << 8) | (target_id & 0xFF)
+    return build_arbitration_id(COMM_SET_CAN_ID, data16, target_id)
 
 def build_arb_read(host_id, target_id):
-    return (0x11 << 24) | ((host_id & 0xFFFF) << 8) | (target_id & 0xFF)
+    return build_arbitration_id(COMM_PARAMETER_READ, host_id, target_id)
 
 def build_arb_get_id(host_id, target_id):
-    return (0x00 << 24) | ((host_id & 0xFFFF) << 8) | (target_id & 0xFF)
+    return build_arbitration_id(COMM_DEVICE_ID, host_id, target_id)
 
 def build_arb_stop(host_id, target_id):
-    return (0x04 << 24) | ((host_id & 0xFFFF) << 8) | (target_id & 0xFF)
-
-def parse_arb(arbitration_id):
-    comm_type = (arbitration_id >> 24) & 0x1F
-    data16 = (arbitration_id >> 8) & 0xFFFF
-    destination = arbitration_id & 0xFF
-    return comm_type, data16, destination
+    return build_arbitration_id(COMM_STOP, host_id, target_id)
 
 def _await_reply(bus, host_id, target_id, comm_type, timeout, index=None):
     expected_destination = DEVICE_ID_DESTINATION if comm_type == 0x00 else host_id
@@ -60,7 +64,7 @@ def _await_reply(bus, host_id, target_id, comm_type, timeout, index=None):
         msg = bus.recv(timeout=max(0.0, deadline - time.monotonic()))
         if msg is None or not msg.is_extended_id:
             continue
-        reply_type, data16, destination = parse_arb(msg.arbitration_id)
+        reply_type, data16, destination = parse_arbitration_id(msg.arbitration_id)
         responder = data16 & 0xFF
         payload = bytes(msg.data)
         if (reply_type == comm_type and destination == expected_destination
@@ -123,7 +127,7 @@ def listen_for_ids(bus, host_id, seconds=8.0):
         if msg is None:
             continue
         if msg.is_extended_id:
-            comm_type, data16, _destination = parse_arb(msg.arbitration_id)
+            comm_type, data16, _destination = parse_arbitration_id(msg.arbitration_id)
             responder = data16 & 0xFF
             if comm_type in REPLY_TYPES and responder != host_id:
                 if MIN_CURRENT_ID <= responder <= MAX_MOTOR_ID:
@@ -158,7 +162,7 @@ class Worker(threading.Thread):
         self.out_q.put((kind, kw))
 
     def down_hint(self):
-        return (f"{self.channel} 인터페이스가 DOWN 입니다  ->  "
+        return (f"{self.channel} is DOWN  ->  "
                 f"sudo ip link set {self.channel} up type can bitrate 1000000")
 
     def close_bus(self):
@@ -178,9 +182,9 @@ class Worker(threading.Thread):
         try:
             self.bus = can.Bus(channel=self.channel, interface=self.interface)
         except Exception as exc:
-            self.emit("bus", ok=False, text=f"{self.channel} 열기 실패: {exc}")
+            self.emit("bus", ok=False, text=f"Failed to open {self.channel}: {exc}")
             return False
-        self.emit("bus", ok=True, text=f"{self.channel} 연결됨")
+        self.emit("bus", ok=True, text=f"{self.channel} connected")
         return True
 
     def fail(self, exc):
@@ -188,7 +192,7 @@ class Worker(threading.Thread):
         if "Network is down" in text or "No such device" in text:
             self.close_bus()
             self.emit("bus", ok=False, text=self.down_hint())
-        self.emit("done", ok=False, new=None, text=f"오류: {text}")
+        self.emit("done", ok=False, new=None, text=f"Error: {text}")
 
     def run(self):
         self.ensure_bus()
@@ -200,7 +204,7 @@ class Worker(threading.Thread):
                 continue
             try:
                 if not self.ensure_bus():
-                    self.emit("done", ok=False, new=None, text=f"오류: {self.down_hint()}")
+                    self.emit("done", ok=False, new=None, text=f"Error: {self.down_hint()}")
                     continue
                 action = cmd[0]
                 if action == "check":
@@ -221,41 +225,41 @@ class Worker(threading.Thread):
         for motor_id in sorted(found):
             detail = found[motor_id]
             suffix = f"  ({detail})" if detail else ""
-            self.emit("log", text=f"  발견: ID {motor_id} (0x{motor_id:02X}){suffix}")
+            self.emit("log", text=f"  found: ID {motor_id} (0x{motor_id:02X}){suffix}")
         if not found:
             self.emit("log", text=f"  {empty_hint}")
         self.emit("scan", ids=sorted(found))
 
     def do_scan(self):
-        self.emit("log", text=f"ID {MIN_CURRENT_ID}~{self.scan_max} 순차 스캔 중...")
+        self.emit("log", text=f"Scanning IDs {MIN_CURRENT_ID}-{self.scan_max}...")
         found = scan_ids(self.bus, self.host_id, max_id=self.scan_max)
-        self.report_found(found, "응답한 모터가 없습니다. '전원 켜서 찾기'를 써보세요.")
+        self.report_found(found, "No motors replied. Try Find on power-up.")
 
     def do_listen(self):
-        self.emit("log", text=f"{LISTEN_SECONDS:.0f}초간 수신 대기 -- 지금 모터 전원을 인가하세요.")
+        self.emit("log", text=f"Listening {LISTEN_SECONDS:.0f}s — power the motor now.")
         found = listen_for_ids(self.bus, self.host_id, seconds=LISTEN_SECONDS)
-        self.report_found(found, "프레임이 하나도 안 왔습니다. 전원/배선/종단저항/비트레이트를 확인하세요.")
+        self.report_found(found, "No frames. Check power, wiring, termination, and bitrate.")
 
     def do_change(self, current, new):
-        self.emit("log", text=f"현재 ID {current} (0x{current:02X}) 응답 확인 중...")
+        self.emit("log", text=f"Checking current ID {current} (0x{current:02X})...")
         current_result = probe(self.bus, self.host_id, current)
         if current_result is None:
             self.emit("done", ok=False, new=None,
-                      text=f"현재 ID {current}가 응답하지 않습니다. 배선/전원/ID를 확인하세요.")
+                      text=f"Current ID {current} did not reply. Check wiring, power, and ID.")
             return
 
-        self.emit("log", text=f"새 ID {new} 충돌 검사 중...")
+        self.emit("log", text=f"Checking new ID {new} for collisions...")
         if probe(self.bus, self.host_id, new) is not None:
             self.emit("done", ok=False, new=None,
-                      text=f"새 ID {new}가 이미 버스에서 응답합니다(충돌). 다른 값을 쓰세요.")
+                      text=f"New ID {new} already replies on the bus. Pick another.")
             return
 
-        self.emit("log", text=f"ID {current} 정지 후 {new}로 변경 명령 전송...")
+        self.emit("log", text=f"Stopping ID {current}, then sending change to {new}...")
         send_stop(self.bus, self.host_id, current)
         time.sleep(0.05)
         send_set_id(self.bus, self.host_id, current, new)
 
-        self.emit("log", text=f"새 ID {new} 검증 중...")
+        self.emit("log", text=f"Verifying new ID {new}...")
         new_result = None
         for _ in range(10):
             new_result = probe(self.bus, self.host_id, new)
@@ -268,19 +272,19 @@ class Worker(threading.Thread):
             previous_uid = current_result["uid"]
             if previous_uid and new_result["uid"] and previous_uid != new_result["uid"]:
                 self.emit("done", ok=False, new=None,
-                          text="새 ID에서 다른 UID가 응답했습니다. ID 충돌 가능성이 있습니다.")
+                          text="A different UID replied on the new ID. Possible ID collision.")
                 return
             self.emit("done", ok=True, new=new,
-                      text=f"성공: 모터가 ID {new} (0x{new:02X})로만 응답합니다.")
+                      text=f"OK: motor replies only on ID {new} (0x{new:02X}).")
         elif new_result is None and old_result is not None:
             self.emit("done", ok=False, new=None,
-                      text=f"변경 실패: 모터가 여전히 이전 ID {current}로 응답합니다. ID는 바뀌지 않았습니다.")
+                      text=f"Change failed: motor still replies on old ID {current}.")
         elif new_result is not None and old_result is not None:
             self.emit("done", ok=False, new=None,
-                      text="이전 ID와 새 ID가 모두 응답합니다. 중복 모터 또는 ID 충돌 상태입니다.")
+                      text="Both old and new IDs reply. Duplicate motors or ID collision.")
         else:
             self.emit("done", ok=False, new=None,
-                      text=f"ID {new}, {current} 둘 다 무응답입니다. 전원을 재인가한 뒤 '전원 켜서 찾기'로 확인하세요.")
+                      text=f"Neither ID {new} nor {current} replies. Power-cycle and use Find on power-up.")
 
     def shutdown(self):
         self._stop_event.set()
@@ -306,43 +310,43 @@ class App:
         frm = ttk.Frame(root, padding=12)
         frm.pack(fill=tk.BOTH, expand=True)
 
-        self.bus_var = tk.StringVar(value=f"버스 여는 중... ({args.channel})")
+        self.bus_var = tk.StringVar(value=f"Opening bus... ({args.channel})")
         ttk.Label(frm, textvariable=self.bus_var, foreground="#555").pack(anchor="w", pady=(0, 10))
 
         cur = ttk.Frame(frm)
         cur.pack(fill=tk.X, pady=3)
-        ttk.Label(cur, text="현재 ID", width=8).pack(side=tk.LEFT)
+        ttk.Label(cur, text="Current ID", width=10).pack(side=tk.LEFT)
         self.current_var = tk.StringVar()
         self.current_box = ttk.Combobox(cur, textvariable=self.current_var, width=6, values=[])
         self.current_box.pack(side=tk.LEFT)
         self.current_box.bind("<Return>", lambda _e: self.check_current())
-        self.scan_btn = ttk.Button(cur, text="스캔", command=self.scan)
+        self.scan_btn = ttk.Button(cur, text="Scan", command=self.scan)
         self.scan_btn.pack(side=tk.LEFT, padx=(6, 0))
-        self.check_btn = ttk.Button(cur, text="확인", command=self.check_current)
+        self.check_btn = ttk.Button(cur, text="Check", command=self.check_current)
         self.check_btn.pack(side=tk.LEFT, padx=(4, 0))
         self.check_var = tk.StringVar(value="-")
         ttk.Label(cur, textvariable=self.check_var).pack(side=tk.LEFT, padx=(8, 0))
 
         listen_row = ttk.Frame(frm)
         listen_row.pack(fill=tk.X, pady=(2, 0))
-        ttk.Label(listen_row, text="", width=8).pack(side=tk.LEFT)
-        self.listen_btn = ttk.Button(listen_row, text=f"전원 켜서 찾기 ({LISTEN_SECONDS:.0f}s)",
+        ttk.Label(listen_row, text="", width=10).pack(side=tk.LEFT)
+        self.listen_btn = ttk.Button(listen_row, text=f"Find on power-up ({LISTEN_SECONDS:.0f}s)",
                                      command=self.listen)
         self.listen_btn.pack(side=tk.LEFT)
-        ttk.Label(listen_row, text="스캔이 실패할 때", foreground="#888").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(listen_row, text="if Scan fails", foreground="#888").pack(side=tk.LEFT, padx=(8, 0))
 
         new = ttk.Frame(frm)
         new.pack(fill=tk.X, pady=3)
-        ttk.Label(new, text="새 ID", width=8).pack(side=tk.LEFT)
+        ttk.Label(new, text="New ID", width=10).pack(side=tk.LEFT)
         self.new_var = tk.StringVar()
         ttk.Entry(new, textvariable=self.new_var, width=8).pack(side=tk.LEFT)
-        ttk.Label(new, text=f"({MIN_NEW_ID}~{MAX_MOTOR_ID}, 예: 5 또는 0x05)",
+        ttk.Label(new, text=f"({MIN_NEW_ID}-{MAX_MOTOR_ID}, e.g. 5 or 0x05)",
                   foreground="#888").pack(side=tk.LEFT, padx=(8, 0))
 
-        self.change_btn = ttk.Button(frm, text="변경", command=self.change_id)
+        self.change_btn = ttk.Button(frm, text="Change", command=self.change_id)
         self.change_btn.pack(fill=tk.X, pady=(8, 10))
 
-        ttk.Label(frm, text="로그").pack(anchor="w")
+        ttk.Label(frm, text="Log").pack(anchor="w")
         self.log = tk.Text(frm, height=8, wrap="word", state="disabled")
         self.log.pack(fill=tk.BOTH, expand=True)
 
@@ -352,16 +356,16 @@ class App:
     def parse_id(self, raw, field, minimum):
         raw = raw.strip()
         if not raw:
-            messagebox.showerror("입력 오류", f"{field}를 입력하세요.")
+            messagebox.showerror("Input error", f"Enter {field}.")
             return None
         try:
             value = int(raw, 0)
         except ValueError:
-            messagebox.showerror("입력 오류", f"{field}는 숫자여야 합니다 (예: 5 또는 0x05).")
+            messagebox.showerror("Input error", f"{field} must be a number (e.g. 5 or 0x05).")
             return None
         if not minimum <= value <= MAX_MOTOR_ID:
-            messagebox.showerror("입력 오류",
-                                 f"{field}는 {minimum}~{MAX_MOTOR_ID} 범위여야 합니다.")
+            messagebox.showerror("Input error",
+                                 f"{field} must be {minimum}-{MAX_MOTOR_ID}.")
             return None
         return value
 
@@ -377,40 +381,40 @@ class App:
             return
         self.set_busy(True)
         self.check_var.set("-")
-        self.append_log(f"[전원 켜서 찾기] {LISTEN_SECONDS:.0f}초 대기 -- 지금 모터 전원을 인가하세요.")
+        self.append_log(f"[Find on power-up] waiting {LISTEN_SECONDS:.0f}s — power the motor now.")
         self.cmd_q.put(("listen",))
 
     def check_current(self):
         if self.busy:
             return
-        current = self.parse_id(self.current_var.get(), "현재 ID", MIN_CURRENT_ID)
+        current = self.parse_id(self.current_var.get(), "Current ID", MIN_CURRENT_ID)
         if current is None:
             return
-        self.check_var.set("확인 중...")
+        self.check_var.set("checking...")
         self.cmd_q.put(("check", current))
 
     def change_id(self):
         if self.busy:
             return
-        current = self.parse_id(self.current_var.get(), "현재 ID", MIN_CURRENT_ID)
+        current = self.parse_id(self.current_var.get(), "Current ID", MIN_CURRENT_ID)
         if current is None:
             return
-        new = self.parse_id(self.new_var.get(), "새 ID", MIN_NEW_ID)
+        new = self.parse_id(self.new_var.get(), "New ID", MIN_NEW_ID)
         if new is None:
             return
         if current == new:
-            messagebox.showinfo("변경", "현재 ID와 새 ID가 같습니다.")
+            messagebox.showinfo("Change", "Current ID and new ID are the same.")
             return
         if not messagebox.askyesno(
-            "영구 변경 확인",
-            f"모터 ID {current} (0x{current:02X}) -> {new} (0x{new:02X})\n"
-            "영구적으로 변경합니다.\n\n"
-            "같은 현재 ID의 모터가 여러 대 연결되어 있으면 모두 변경됩니다.\n"
-            "대상 모터 한 대만 연결했는지 확인한 뒤 진행하세요.",
+            "Confirm permanent change",
+            f"Motor ID {current} (0x{current:02X}) -> {new} (0x{new:02X})\n"
+            "This change is permanent.\n\n"
+            "Every motor currently using this ID will change.\n"
+            "Connect only the target motor before continuing.",
         ):
             return
         self.set_busy(True)
-        self.append_log(f"[변경 시작] {current} -> {new}")
+        self.append_log(f"[change] {current} -> {new}")
         self.cmd_q.put(("change", current, new))
 
     def set_busy(self, busy):
@@ -434,25 +438,25 @@ class App:
             if kind == "bus":
                 self.bus_var.set(kw["text"])
             elif kind == "check":
-                self.check_var.set("응답함 ✅" if kw["ok"] else "무응답 ❌")
+                self.check_var.set("reply ✅" if kw["ok"] else "no reply ❌")
             elif kind == "scan":
                 ids = kw["ids"]
                 self.current_box.configure(values=[str(i) for i in ids])
                 if len(ids) == 1:
                     self.current_var.set(str(ids[0]))
-                    self.check_var.set("응답함 ✅")
+                    self.check_var.set("reply ✅")
                 self.set_busy(False)
             elif kind == "log":
                 self.append_log(kw["text"])
             elif kind == "error":
-                self.append_log("오류: " + kw["text"])
+                self.append_log("Error: " + kw["text"])
             elif kind == "done":
                 self.append_log(kw["text"])
                 if kw["ok"] and kw.get("new") is not None:
                     self.current_var.set(str(kw["new"]))
                     self.new_var.set("")
-                    self.check_var.set("응답함 ✅")
-                elif self.check_var.get() == "확인 중...":
+                    self.check_var.set("reply ✅")
+                elif self.check_var.get() == "checking...":
                     self.check_var.set("-")
                 self.set_busy(False)
         self.root.after(80, self.poll)
