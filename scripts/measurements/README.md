@@ -19,8 +19,10 @@ measurements/
 │   ├── analyze_friction.py
 │   └── data/
 ├── joint/
-    ├── read_joint_values.py
-    └── read_joint_with_imu.py
+│   ├── read_joint_values.py
+│   └── read_joint_with_imu.py
+├── shutdown/
+│   └── shutdown.py
 └── noise/
     ├── imu/
     │   ├── imu_capture.py
@@ -178,6 +180,28 @@ python3 scripts/measurements/joint/read_joint_values.py --watch
 python3 scripts/measurements/joint/read_joint_with_imu.py \
   --imu-port /dev/ttyUSB0 \
   --n100-dir scripts/motor_control/motor_with_imu_test
+```
+
+<br>
+
+## shutdown
+
+### `shutdown.py`
+
+파워 커넥터를 뽑기 전에 실행. can0/can1의 모터를 전부 짧게 감속(kd-only)시킨 뒤 disable(stop)하고, 각 모터가 실제로 Reset 상태로 들어갔는지 feedback으로 확인한다.
+
+| Option | Required | Default | Description |
+| --- | :---: | --- | --- |
+| `--channels` | No | `can0 can1` | CAN channels to use |
+| `--ids` | No | 1~12 (선택한 채널 범위) | 대상 모터 ID |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--brake-time` | No | `0.3` | disable 전 감속 시간(초), `0`이면 즉시 disable |
+| `--kd` | No | `3.0` | 감속 구간 kd |
+
+```bash
+# Example
+python3 scripts/measurements/shutdown/shutdown.py
 ```
 
 <br>
