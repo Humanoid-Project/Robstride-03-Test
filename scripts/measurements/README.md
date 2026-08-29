@@ -10,6 +10,8 @@ measurements/
 │   ├── armature.py
 │   ├── analyze_armature.py
 │   └── data/
+├── check/
+│   └── shutdown.py
 ├── damping/
 │   ├── damping.py
 │   ├── analyze_damping.py
@@ -21,8 +23,6 @@ measurements/
 ├── joint/
 │   ├── read_joint_values.py
 │   └── read_joint_with_imu.py
-├── check/
-│   └── shutdown.py
 └── noise/
     ├── imu/
     │   ├── imu_capture.py
@@ -70,6 +70,26 @@ python3 scripts/measurements/armature/armature.py \
 # Example
 python3 scripts/measurements/armature/analyze_armature.py \
   "scripts/measurements/armature/data/id11_rs02_*.csv"
+```
+
+<br>
+
+## check
+
+### `shutdown.py`
+
+| Option | Required | Default | Description |
+| --- | :---: | --- | --- |
+| `--channels` | No | `can0 can1` | CAN channels to use |
+| `--ids` | No | `1~12` (from selected channels) | Target motor IDs |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--brake-time` | No | `0.3` | Braking time before disable (s); `0` disables immediately |
+| `--kd` | No | `3.0` | Damping gain during the braking phase |
+
+```bash
+# Example
+python3 scripts/measurements/check/shutdown.py
 ```
 
 <br>
@@ -180,26 +200,6 @@ python3 scripts/measurements/joint/read_joint_values.py --watch
 python3 scripts/measurements/joint/read_joint_with_imu.py \
   --imu-port /dev/ttyUSB0 \
   --n100-dir scripts/motor_control/motor_with_imu_test
-```
-
-<br>
-
-## check
-
-### `shutdown.py`
-
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | CAN channels to use |
-| `--ids` | No | `1~12` (from selected channels) | Target motor IDs |
-| `--interface` | No | `socketcan` | python-can interface |
-| `--host-id` | No | `0xFD` | Host CAN ID |
-| `--brake-time` | No | `0.3` | Braking time before disable (s); `0` disables immediately |
-| `--kd` | No | `3.0` | Damping gain during the braking phase |
-
-```bash
-# Example
-python3 scripts/measurements/check/shutdown.py
 ```
 
 <br>
