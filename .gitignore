@@ -6,8 +6,6 @@ __pycache__/
 
 scripts/motor_control/motor_with_imu_test/build/
 scripts/motor_control/motor_with_imu_test/n100_cpp/build/
-scripts/motor_control/policy_test/build/
-scripts/motor_control/policy_test/n100_cpp/build/
 scripts/measurements/**/logs/
 scripts/measurements/**/data/
 scripts/measurements/joint/joint_limit/
@@ -18,5 +16,3 @@ scripts/measurements/joint/joint_limit/
 .codex/
 .claude/
 AGENTS.md
-
-docs/
