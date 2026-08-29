@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-# 파워 커넥터를 뽑기 전에 실행: can0/can1에 연결된 모터를 전부 부드럽게 정지시키고
-# disable(motor.stop())한다. 어느 스크립트로 마지막에 뭘 제어하고 있었는지와 무관하게
-# 항상 "다 꺼졌다"를 보장하는 게 목적이라, 다른 motor_control 스크립트와 마찬가지로
-# 이 파일 하나로 완결되게 만들었다 (common.py 등 다른 모듈에 의존하지 않음).
 import argparse
 import sys
 import time
@@ -48,7 +44,6 @@ CT_OPERATION = 0x01
 CT_FEEDBACK = 0x02
 CT_STOP = 0x04
 
-# mode_status 값 (feedback 프레임 arbitration id 상위 2비트): 0=Reset, 1=Cali, 2=Motor(구동 중)
 MODE_NAMES = {0: "Reset(정지됨)", 1: "Cali", 2: "Motor(구동중)"}
 
 
@@ -136,6 +131,11 @@ class Motor:
                 return feedback
 
 
+def drain(bus):
+    while bus.recv(timeout=0.0) is not None:
+        pass
+
+
 def channel_for_id(motor_id):
     for channel, id_range in CHANNEL_ID_RANGES.items():
         if motor_id in id_range:
@@ -182,8 +182,6 @@ def main():
             print("대상 모터가 없습니다.")
             return 1
 
-        # 1) 잔여 속도가 있으면 kp=0, kd만 걸어서 부드럽게 0속도로 감속.
-        #    (mujoco_hardware_twin.py의 brake_and_stop()과 같은 방식)
         if args.brake_time > 0.0:
             print(f"감속 중... ({args.brake_time:.2f}s, kd={args.kd})")
             deadline = time.monotonic() + args.brake_time
@@ -192,16 +190,21 @@ def main():
                     try:
                         motor.control(pos=0.0, vel=0.0, kp=0.0,
                                        kd=min(args.kd, motor.spec.kd_max), torque=0.0)
-                        motor.poll_feedback(timeout=0.0)
                     except can.CanError:
                         pass
+                for bus in buses.values():
+                    drain(bus)
                 time.sleep(0.01)
 
-        # 2) 전부 disable.
+        for bus in buses.values():
+            drain(bus)
+
         print("\ndisable 중...")
         print(f"{'ID':>3}  {'ch':<5}  {'joint':<18}  {'속도':>10}  결과")
         print("-" * 60)
         ok_count = 0
+        silent_count = 0
+        running_count = 0
         for motor_id, motor in motors.items():
             channel = channel_for_id(motor_id)
             try:
@@ -212,6 +215,7 @@ def main():
 
             feedback = motor.poll_feedback(timeout=0.2)
             if feedback is None:
+                silent_count += 1
                 print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  {'-':>10}  무응답 (원래 꺼져있었을 수 있음)")
                 continue
 
@@ -219,14 +223,20 @@ def main():
             success = feedback["mode_status"] == 0
             if success:
                 ok_count += 1
+            else:
+                running_count += 1
             result = "OK" if success else f"WARNING: {mode} 상태 (재시도 필요)"
             print(f"{motor_id:>3}  {channel:<5}  {JOINT_MAP.get(motor_id, '?'):<18}  "
                   f"{feedback['velocity']:>+9.3f}  {result}")
 
-        print(f"\n{ok_count}/{len(motors)} 모터 disable 확인됨. "
-              f"(무응답은 실패가 아니라 원래 꺼져 있었거나 배선이 없는 경우일 수 있습니다)")
-        print("이제 파워 커넥터를 뽑아도 됩니다.")
-        return 0 if ok_count == len(motors) else 1
+        print(f"\n{ok_count}/{len(motors)} 모터 disable 확인됨, 무응답 {silent_count}, "
+              f"구동중 {running_count}.")
+        if running_count:
+            print("일부 모터가 아직 구동 상태입니다. 파워를 뽑기 전에 다시 실행하세요.")
+            return 1
+        print("이제 파워 커넥터를 뽑아도 됩니다. "
+              "(무응답은 원래 꺼져 있었거나 배선이 없는 경우일 수 있습니다)")
+        return 0
     except KeyboardInterrupt:
         print("\n취소됨 — 그래도 지금까지 보낸 stop 명령은 유효합니다.")
         return 0

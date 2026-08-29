@@ -22,7 +22,9 @@ measurements/
 │   └── data/
 ├── joint/
 │   ├── read_joint_values.py
-│   └── read_joint_with_imu.py
+│   ├── read_joint_with_imu.py
+│   ├── scan_joint_limits.py
+│   └── joint_limit/
 └── noise/
     ├── imu/
     │   ├── imu_capture.py
@@ -201,6 +203,27 @@ python3 scripts/measurements/joint/read_joint_with_imu.py \
   --imu-port /dev/ttyUSB0 \
   --n100-dir scripts/motor_control/motor_with_imu_test
 ```
+
+### `scan_joint_limits.py`
+
+Tracks live min/max while the joint is moved by hand; press Enter to save.
+
+| Option | Required | Default | Description |
+| --- | :---: | --- | --- |
+| `--motor-id` | No | `1~12` | Motor IDs to track |
+| `--interface` | No | `socketcan` | python-can interface |
+| `--host-id` | No | `0xFD` | Host CAN ID |
+| `--timeout` | No | `0.1` | Per-motor `mechPos` response wait (s) |
+| `--interval` | No | `0.1` | Screen refresh interval (s) |
+
+```bash
+# Example
+python3 scripts/measurements/joint/scan_joint_limits.py --motor-id 5 6
+```
+
+| Output | Description |
+| --- | --- |
+| `joint/joint_limit/*.csv` | Recorded min/max per motor |
 
 <br>
 
