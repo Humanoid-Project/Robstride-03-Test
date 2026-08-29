@@ -26,7 +26,7 @@ def parse_args():
     p.add_argument("--duration", type=float, default=DEFAULT_DURATION,
                    help="측정 시간(초), 기본 10")
     p.add_argument("--n100-dir",
-                   default=str(Path(__file__).resolve().parents[2]
+                   default=str(Path(__file__).resolve().parents[3]
                                / "motor_control" / "motor_with_imu_test"),
                    help="n100*.so 가 있는 폴더")
     p.add_argument("--tag", default="", help="출력 CSV 파일명에 붙일 태그")

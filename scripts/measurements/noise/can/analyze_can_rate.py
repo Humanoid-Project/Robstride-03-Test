@@ -6,8 +6,10 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from common import channel_for_id
+
+EXPECTED_FEEDBACK_SOURCE = "type_0x02"
 
 
 def load_rows(path):
@@ -45,6 +47,11 @@ def main():
     by_motor = defaultdict(list)
     for path in paths:
         meta, rows = load_rows(path)
+        source = meta.get("feedback_source")
+        if source != EXPECTED_FEEDBACK_SOURCE:
+            print(f"지원하지 않는 피드백 출처: {path} "
+                  f"(expected={EXPECTED_FEEDBACK_SOURCE}, got={source or '메타데이터 없음'})")
+            return 1
         for row in rows:
             by_motor[int(row["motor_id"])].append(row)
 

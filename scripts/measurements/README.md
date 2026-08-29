@@ -18,9 +18,19 @@ measurements/
 │   ├── friction.py
 │   ├── analyze_friction.py
 │   └── data/
-└── joint/
+├── joint/
     ├── read_joint_values.py
     └── read_joint_with_imu.py
+└── noise/
+    ├── imu/
+    │   ├── imu_capture.py
+    │   ├── analyze_imu_noise.py
+    │   └── data/
+    └── can/
+        ├── can_capture.py
+        ├── analyze_can_noise.py
+        ├── analyze_can_rate.py
+        └── data/
 ```
 
 <br>
@@ -168,4 +178,35 @@ python3 scripts/measurements/joint/read_joint_values.py --watch
 python3 scripts/measurements/joint/read_joint_with_imu.py \
   --imu-port /dev/ttyUSB0 \
   --n100-dir scripts/motor_control/motor_with_imu_test
+```
+
+<br>
+
+## noise
+
+### IMU
+
+```bash
+python3 scripts/measurements/noise/imu/imu_capture.py \
+  --port /dev/ttyUSB0 \
+  --duration 60 \
+  --tag imu_only_01
+
+python3 scripts/measurements/noise/imu/analyze_imu_noise.py \
+  "scripts/measurements/noise/imu/data/imu_capture_imu_only_01_*.csv"
+```
+
+### CAN
+
+- `type_0x02`: real-time feedback frame (pos/vel/torque/temp), returned in response to a `control()` command.
+- `type_0x11`: parameter-read command, e.g. `mechPos` (`0x7019`) / `mechVel` (`0x701B`).
+
+```bash
+python3 scripts/measurements/noise/can/can_capture.py --duration 10
+
+python3 scripts/measurements/noise/can/analyze_can_noise.py \
+  "scripts/measurements/noise/can/data/can_capture_*.csv"
+
+python3 scripts/measurements/noise/can/analyze_can_rate.py \
+  "scripts/measurements/noise/can/data/can_capture_*.csv"
 ```
