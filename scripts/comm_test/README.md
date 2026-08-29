@@ -88,15 +88,17 @@ acquisition, missing-response handling, constants, and the N100 wrapper.
 ## `tests/test_read.py`
 
 Sends parameter-read requests only. It never enables a motor or sends a motor
-control command. Position and velocity requests are issued as one batch per
-channel, while `can0` and `can1` are acquired in parallel.
+control command. As in the former `policy_test`, one background reader per CAN
+channel continuously performs a request-response handshake for every position
+and velocity value. The 60 Hz foreground loop only takes a non-blocking snapshot
+of the latest readings.
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
 | `--channels` | No | `can0 can1` | CAN channels to read |
 | `--interface` | No | `socketcan` | python-can interface |
 | `--host-id` | No | `0xFD` | Host CAN ID |
-| `--timeout` | No | `0.02` | Whole-channel batch response timeout in seconds |
+| `--timeout` | No | `0.02` | Per-parameter response timeout in seconds |
 | `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
 | `--duration` | No | `5.0` | Measurement duration in seconds |
 | `--print-hz` | No | `2.0` | Intermediate print frequency |

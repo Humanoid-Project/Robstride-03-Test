@@ -171,11 +171,14 @@ class CanProtocolTest(unittest.TestCase):
             return buses[channel]
 
         with CanBus(interface="virtual-test", timeout_s=0.005, bus_factory=factory) as bus:
-            cycle = bus.read_all()
+            cycle = bus.wait_for_first(timeout_s=0.1)
 
         self.assertTrue(cycle.complete)
         self.assertEqual(set(cycle.readings), set(MOTOR_IDS))
         self.assertEqual(cycle.missing_parameters, ())
+        self.assertEqual(set(cycle.channel_stats), set(CHANNEL_MOTOR_IDS))
+        self.assertTrue(all(stats.total_scans >= 1 for stats in cycle.channel_stats.values()))
+        self.assertTrue(all(stats.response_ratio == 1.0 for stats in cycle.channel_stats.values()))
         for motor_id, reading in cycle.readings.items():
             self.assertAlmostEqual(reading.position_rad, motor_id + 0.25)
             self.assertAlmostEqual(reading.velocity_rad_s, motor_id + 0.5)
@@ -188,7 +191,7 @@ class CanProtocolTest(unittest.TestCase):
             return FakeBus(channel, missing=missing)
 
         with CanBus(timeout_s=0.001, bus_factory=factory) as bus:
-            cycle = bus.read_all()
+            cycle = bus.wait_for_first(timeout_s=0.1)
 
         self.assertFalse(cycle.complete)
         self.assertIsNone(cycle.readings[1].velocity_rad_s)

@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 import math
 from pathlib import Path
-import statistics
 import sys
 import time
 
@@ -63,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         "--timeout",
         type=positive_float,
         default=DEFAULT_CAN_TIMEOUT_S,
-        help="채널당 batch 응답 대기시간(초, 기본: 0.02)",
+        help="파라미터 요청당 응답 대기시간(초, 기본: 0.02)",
     )
     parser.add_argument("--imu-port", default=DEFAULT_IMU_PORT, help="N100 시리얼 포트")
     parser.add_argument(
@@ -123,11 +121,6 @@ def print_snapshot(cycle: ReadCycle | None, imu_reading: ImuReading | None) -> N
         )
 
 
-def percentile95(values: list[float]) -> float:
-    ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)]
-
-
 def main() -> int:
     args = parse_args()
     if args.no_can and args.no_imu:
@@ -146,8 +139,11 @@ def main() -> int:
                 timeout_s=args.timeout,
             )
             bus.open()
+            first_can = bus.wait_for_first(
+                timeout_s=max(1.0, args.timeout * 24.0 + 0.5),
+            )
             print(f"CAN 열기 완료: {', '.join(args.channels)}")
-        except (OSError, can.CanError, ValueError) as error:
+        except (OSError, can.CanError, RuntimeError, ValueError) as error:
             print(f"CAN 열기 실패: {error}")
             print("먼저 ./scripts/comm_test/can_up.sh를 직접 실행해 인터페이스를 올리세요.")
             startup_failed = True
@@ -169,42 +165,40 @@ def main() -> int:
             imu.close()
         return 1
 
-    channel_elapsed: dict[str, list[float]] = defaultdict(list)
-    channel_received: dict[str, int] = defaultdict(int)
-    channel_expected: dict[str, int] = defaultdict(int)
     complete_cycles = 0
     total_cycles = 0
-    imu_sequences: set[int] = set()
-    last_cycle = None
+    last_cycle = first_can if bus is not None else None
     last_imu = first_imu
-    if first_imu is not None:
-        imu_sequences.add(first_imu.sequence)
+    first_imu_sequence = first_imu.sequence if first_imu is not None else None
+    last_imu_sequence = first_imu_sequence
 
     started_at = time.monotonic()
     deadline = started_at + args.duration
     next_print = started_at
+    next_tick = started_at
     try:
         while time.monotonic() < deadline:
             if bus is not None:
                 last_cycle = bus.read_all()
                 total_cycles += 1
                 complete_cycles += int(last_cycle.complete)
-                for channel, stats in last_cycle.channel_stats.items():
-                    channel_elapsed[channel].append(stats.elapsed_s)
-                    channel_received[channel] += stats.received_responses
-                    channel_expected[channel] += stats.expected_responses
-            else:
-                time.sleep(1.0 / CONTROL_HZ)
 
             if imu is not None:
                 last_imu = imu.latest()
                 if last_imu is not None:
-                    imu_sequences.add(last_imu.sequence)
+                    last_imu_sequence = last_imu.sequence
 
             now = time.monotonic()
             if now >= next_print:
                 print_snapshot(last_cycle, last_imu)
                 next_print = now + 1.0 / args.print_hz
+
+            next_tick += 1.0 / CONTROL_HZ
+            sleep_s = next_tick - time.monotonic()
+            if sleep_s > 0.0:
+                time.sleep(sleep_s)
+            else:
+                next_tick = time.monotonic()
     except KeyboardInterrupt:
         print("\n사용자가 측정을 중단했습니다.")
     except (RuntimeError, can.CanError, OSError) as error:
@@ -220,44 +214,47 @@ def main() -> int:
     success = True
     print("\n측정 요약")
     if bus is not None:
-        overall_scan_hz = total_cycles / measured_s if measured_s > 0.0 else 0.0
+        policy_sample_hz = total_cycles / measured_s if measured_s > 0.0 else 0.0
         complete_percent = 100.0 * complete_cycles / total_cycles if total_cycles else 0.0
         print(
-            f"  전체 병렬 scan: {overall_scan_hz:.1f} Hz, "
-            f"완전한 선택 축 cycle {complete_cycles}/{total_cycles} ({complete_percent:.1f}%)"
+            f"  60 Hz 스냅샷: 실제 {policy_sample_hz:.1f} Hz, "
+            f"완전한 선택 축 {complete_cycles}/{total_cycles} ({complete_percent:.1f}%)"
         )
+        sensor_scan_rates = []
         for channel in args.channels:
-            samples = channel_elapsed[channel]
-            if not samples:
-                print(f"  {channel}: 측정값 없음")
-                success = False
-                continue
-            mean_s = statistics.fmean(samples)
-            p95_s = percentile95(samples)
-            response_ratio = channel_received[channel] / channel_expected[channel]
-            response_hz = channel_received[channel] / sum(samples)
-            scan_hz = 1.0 / mean_s
+            stats = last_cycle.channel_stats[channel]
+            scan_hz = stats.average_scan_hz
+            sensor_scan_rates.append(scan_hz)
+            complete_scan_percent = 100.0 * stats.complete_scans / stats.total_scans
             print(
-                f"  {channel}: 평균 {mean_s * 1000.0:.2f} ms, "
-                f"p95 {p95_s * 1000.0:.2f} ms, {scan_hz:.1f} scan/s, "
-                f"{response_hz:.1f} parameter responses/s, 응답률 {response_ratio * 100.0:.1f}%"
+                f"  {channel}: 평균 {stats.mean_elapsed_s * 1000.0:.2f} ms, "
+                f"p95 {stats.p95_elapsed_s * 1000.0:.2f} ms, {scan_hz:.1f} scan/s, "
+                f"{stats.average_response_hz:.1f} parameter responses/s, "
+                f"응답률 {stats.response_ratio * 100.0:.1f}%, "
+                f"완전 scan {complete_scan_percent:.1f}%"
             )
             print(
                 f"    판정: 60 Hz full scan {'가능' if scan_hz >= CONTROL_HZ else '미달'}, "
-                f"200 responses/s {'충족' if response_hz >= 200.0 else '미달'}"
+                f"200 responses/s {'충족' if stats.average_response_hz >= 200.0 else '미달'}"
             )
-            success &= response_ratio == 1.0 and scan_hz >= CONTROL_HZ
+            success &= stats.response_ratio == 1.0 and scan_hz >= CONTROL_HZ
+        if sensor_scan_rates:
+            print(f"  병렬 센서 갱신 병목: {min(sensor_scan_rates):.1f} Hz")
         success &= complete_cycles > 0
     if imu is not None:
-        imu_update_hz = max(0, len(imu_sequences) - 1) / measured_s if measured_s > 0.0 else 0.0
-        print(f"  IMU: 고유 seq {len(imu_sequences)}개, 관측 갱신 약 {imu_update_hz:.1f} Hz")
         if last_imu is None:
             print("  IMU 판정: 샘플 없음")
             success = False
         else:
+            sequence_delta = max(0, last_imu_sequence - first_imu_sequence)
+            imu_update_hz = sequence_delta / measured_s if measured_s > 0.0 else 0.0
+            print(
+                f"  IMU: seq {first_imu_sequence}→{last_imu_sequence}, "
+                f"센서 갱신 약 {imu_update_hz:.1f} Hz"
+            )
             gravity_error = math.dist(last_imu.projected_gravity, EXPECTED_UPRIGHT_GRAVITY)
             print(f"  IMU 중력벡터 기준점 오차: {gravity_error:.4f}")
-            success &= len(imu_sequences) >= 2
+            success &= sequence_delta > 0
 
     return 0 if success else 1
 
