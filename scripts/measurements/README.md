@@ -21,7 +21,7 @@ measurements/
 ├── joint/
 │   ├── read_joint_values.py
 │   └── read_joint_with_imu.py
-├── shutdown/
+├── check/
 │   └── shutdown.py
 └── noise/
     ├── imu/
@@ -184,7 +184,7 @@ python3 scripts/measurements/joint/read_joint_with_imu.py \
 
 <br>
 
-## shutdown
+## check
 
 ### `shutdown.py`
 
@@ -199,7 +199,7 @@ python3 scripts/measurements/joint/read_joint_with_imu.py \
 
 ```bash
 # Example
-python3 scripts/measurements/shutdown/shutdown.py
+python3 scripts/measurements/check/shutdown.py
 ```
 
 <br>
