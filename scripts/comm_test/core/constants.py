@@ -6,8 +6,12 @@ from dataclasses import dataclass
 import math
 
 
-CONTROL_HZ = 60.0
-CONTROL_PERIOD_S = 1.0 / CONTROL_HZ
+# Stage 1 keeps a 60 Hz read-validation loop to prove sensor headroom. The
+# balancing policy contract itself runs at 50 Hz (250 Hz physics / decimation 5).
+READ_VALIDATION_HZ = 60.0
+READ_VALIDATION_PERIOD_S = 1.0 / READ_VALIDATION_HZ
+POLICY_HZ = 50.0
+POLICY_PERIOD_S = 1.0 / POLICY_HZ
 
 HOST_ID = 0xFD
 DEFAULT_CAN_INTERFACE = "socketcan"
@@ -32,6 +36,21 @@ JOINT_NAMES = {
     10: "right_knee_pitch",
     11: "right_ankle_upper",
     12: "right_ankle_lower",
+}
+
+MODEL_JOINT_NAMES = {
+    1: "l_hip_yaw_joint",
+    2: "l_hip_pitch_joint",
+    3: "l_hip_roll_joint",
+    4: "l_knee_pitch_joint",
+    5: "l_ankle_upper_joint",
+    6: "l_ankle_lower_joint",
+    7: "r_hip_yaw_joint",
+    8: "r_hip_pitch_joint",
+    9: "r_hip_roll_joint",
+    10: "r_knee_pitch_joint",
+    11: "r_ankle_upper_joint",
+    12: "r_ankle_lower_joint",
 }
 
 MOTOR_MODELS = {
@@ -112,11 +131,15 @@ DEFAULT_IMU_BAUDRATE = 921600
 IMU_MOUNT_ROLL_RAD = math.pi
 EXPECTED_UPRIGHT_GRAVITY = (-0.049, -0.036, -0.998)
 
-# These values must come from the exact RoboNex training configuration. Empty
-# tuples deliberately make later observation/control code fail configuration
-# validation instead of silently using guessed values.
-POLICY_JOINT_ORDER: tuple[str, ...] = ()
-DEFAULT_JOINT_POSITIONS_RAD: tuple[float, ...] = ()
+# RoboNex balancing contract shared by robonex-common and its policy manifest.
+POLICY_MOTOR_IDS = (1, 7, 2, 8, 3, 9, 4, 10, 6, 5, 12, 11)
+POLICY_JOINT_ORDER = tuple(MODEL_JOINT_NAMES[motor_id] for motor_id in POLICY_MOTOR_IDS)
+DEFAULT_JOINT_POSITIONS_RAD = (0.0,) * len(POLICY_MOTOR_IDS)
+POLICY_OBSERVATION_SIZE = 3 * len(POLICY_MOTOR_IDS) + 6
+RUNNER_ACTION_CLIP = 3.0
+
+# Action conversion is deliberately deferred to the per-policy manifest. A
+# scale alone is insufficient because this policy also has offsets and clips.
 ACTION_SCALE_RAD: tuple[float, ...] = ()
 
 

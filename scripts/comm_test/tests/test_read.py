@@ -17,7 +17,6 @@ sys.path.insert(0, str(COMM_TEST_DIR))
 from core.can_bus import CanBus, ReadCycle  # noqa: E402
 from core.constants import (  # noqa: E402
     CHANNEL_MOTOR_IDS,
-    CONTROL_HZ,
     DEFAULT_CAN_INTERFACE,
     DEFAULT_CAN_TIMEOUT_S,
     DEFAULT_IMU_PORT,
@@ -25,6 +24,7 @@ from core.constants import (  # noqa: E402
     HOST_ID,
     JOINT_NAMES,
     MOTOR_MODELS,
+    READ_VALIDATION_HZ,
 )
 from core.imu import ImuError, ImuReading, N100Imu  # noqa: E402
 
@@ -193,7 +193,7 @@ def main() -> int:
                 print_snapshot(last_cycle, last_imu)
                 next_print = now + 1.0 / args.print_hz
 
-            next_tick += 1.0 / CONTROL_HZ
+            next_tick += 1.0 / READ_VALIDATION_HZ
             sleep_s = next_tick - time.monotonic()
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
@@ -234,10 +234,10 @@ def main() -> int:
                 f"완전 scan {complete_scan_percent:.1f}%"
             )
             print(
-                f"    판정: 60 Hz full scan {'가능' if scan_hz >= CONTROL_HZ else '미달'}, "
+                f"    판정: 60 Hz full scan {'가능' if scan_hz >= READ_VALIDATION_HZ else '미달'}, "
                 f"200 responses/s {'충족' if stats.average_response_hz >= 200.0 else '미달'}"
             )
-            success &= stats.response_ratio == 1.0 and scan_hz >= CONTROL_HZ
+            success &= stats.response_ratio == 1.0 and scan_hz >= READ_VALIDATION_HZ
         if sensor_scan_rates:
             print(f"  병렬 센서 갱신 병목: {min(sensor_scan_rates):.1f} Hz")
         success &= complete_cycles > 0

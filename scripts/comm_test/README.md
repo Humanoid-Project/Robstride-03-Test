@@ -8,9 +8,11 @@ comm_test/
 │   ├── __init__.py
 │   ├── constants.py       # Hardware mapping and protocol constants
 │   ├── can_bus.py         # Parallel, read-only CAN acquisition
-│   └── imu.py             # Non-blocking N100 wrapper
+│   ├── imu.py             # Non-blocking N100 wrapper
+│   └── observation.py     # 42-value balancing-policy observation
 ├── tests/
 │   ├── test_core.py       # Hardware-free stage 1 tests
+│   ├── test_obs.py        # Hardware-free stage 2 tests
 │   └── test_read.py       # Motor and IMU integration test
 ├── n100_cpp/              # N100 C++ SDK (single vendored copy)
 ├── policies/              # Local ONNX policies
@@ -90,8 +92,9 @@ acquisition, missing-response handling, constants, and the N100 wrapper.
 Sends parameter-read requests only. It never enables a motor or sends a motor
 control command. As in the former `policy_test`, one background reader per CAN
 channel continuously performs a request-response handshake for every position
-and velocity value. The 60 Hz foreground loop only takes a non-blocking snapshot
-of the latest readings.
+and velocity value. The 60 Hz foreground validation loop only takes a
+non-blocking snapshot of the latest readings; the balancing policy itself runs
+at 50 Hz.
 
 | Option | Required | Default | Description |
 | --- | :---: | --- | --- |
@@ -115,7 +118,8 @@ of the latest readings.
 ```
 
 The summary reports two different rates. `scan/s` means complete sweeps of all
-six motors on one channel and must reach at least 60 Hz for the policy loop.
+six motors on one channel and must reach at least 60 Hz to retain sensor-reading
+headroom above the 50 Hz policy loop.
 `parameter responses/s` counts individual position or velocity responses and
 is also compared with the provisional 200 responses/s target.
 
@@ -124,9 +128,29 @@ cycle is reported as incomplete and causes the test to fail.
 
 <br>
 
-## Unconfirmed policy constants
+## `tests/test_obs.py`
 
-`POLICY_JOINT_ORDER`, `DEFAULT_JOINT_POSITIONS_RAD`, and `ACTION_SCALE_RAD` in
-`core/constants.py` intentionally remain empty. They must be populated from the
-exact RoboNex training configuration before observation assembly or motor
-control is implemented.
+Runs hardware-free tests for stage 2 observation assembly. It verifies the
+RoboNex balancing contract, policy joint order, mechanical-angle wrapping,
+`q - q_default`, dynamic joint counts, `float32` shape, raw IMU selection, and
+rejection of missing, non-finite, or out-of-range values.
+
+| Option | Required | Default | Description |
+| --- | :---: | --- | --- |
+| `-v` | No | Off | Print each unit-test result |
+
+```bash
+# Example
+.venv/bin/python scripts/comm_test/tests/test_obs.py -v
+```
+
+The balancing observation contains 42 values in this order: 12 relative motor
+positions, 12 motor velocities, three raw IMU angular velocities, three
+projected-gravity values, and 12 previous clipped actions. Velocity commands
+are not part of this balancing policy. The policy motor ID order is
+`1, 7, 2, 8, 3, 9, 4, 10, 6, 5, 12, 11`, and all observation default joint
+positions are zero.
+
+Action offsets, scales, and target clips are intentionally not assembled in
+stage 2. They belong to the per-policy manifest and will be applied after ONNX
+inference.
