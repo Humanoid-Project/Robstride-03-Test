@@ -1,7 +1,7 @@
 import math
 import time
 
-from robonex_common.can import Motor
+from robonex_common.can import FeedbackHub, Motor
 from robonex_common.joints import ACTUATED_JOINTS, JOINT_LIMITS_BY_ID
 from robonex_common.limits import DEFAULT_LIMIT_MARGIN_RAD, exceeds_joint_limit, joint_limit_for
 from robonex_common.motors import MOTOR_SPECS, PEAK_TORQUE, RATED_TORQUE

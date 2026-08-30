@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import can
 import n100
 from robonex_common.can import FeedbackHub, Motor
-from robonex_common.joints import ACTUATED_JOINTS
+from robonex_common.joints import ACTUATED_JOINTS, JOINT_LIMITS_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID, clamp
 
@@ -64,6 +64,7 @@ HOLD_KP = 40.0
 HOLD_KD = 2.0
 OVERSPEED_STOP = 2.0
 FEEDBACK_TIMEOUT = 0.3
+IMU_STALE_TIMEOUT = 0.3
 MOTOR_MODELS = {joint.motor_id: joint.motor_model for joint in ACTUATED_JOINTS}
 JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 CHANNEL_ID_RANGES = {
@@ -105,7 +106,10 @@ class Motion:
         self.label = label
         self.start = dict(start)
         self.current = dict(start)
-        self.target = {mid: targets.get(mid, start[mid]) for mid in motors}
+        self.target = {
+            mid: clamp(targets.get(mid, start[mid]), *JOINT_LIMITS_BY_ID[mid])
+            for mid in motors
+        }
 
         travel = max((abs(self.target[mid] - self.start[mid]) for mid in motors),
                      default=0.0)
@@ -277,6 +281,8 @@ def main():
         last_fired = 0
         last_print = 0.0
         next_tick = time.monotonic()
+        last_imu_seq = None
+        last_imu_seen = time.monotonic()
 
         while True:
             next_tick += period
@@ -300,6 +306,14 @@ def main():
                 continue
             if not driver.is_running:
                 raise RuntimeError(f"IMU reader stopped: {driver.last_error() or 'Unknown error'}")
+
+            if sample.seq != last_imu_seq:
+                last_imu_seq = sample.seq
+                last_imu_seen = now
+            elif now - last_imu_seen > IMU_STALE_TIMEOUT:
+                raise RuntimeError(
+                    f"IMU stale: no new sample for {now - last_imu_seen:.2f}s "
+                    f"(seq stuck at {last_imu_seq})")
 
             if now - last_print >= 1.0:
                 last_print = now

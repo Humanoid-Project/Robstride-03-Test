@@ -4,17 +4,12 @@ import sys
 import time
 
 import can
-from robonex_common.can import Motor
+from robonex_common.can import Motor, drain
 from robonex_common.joints import CHANNEL_MOTOR_IDS, JOINT_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID
 
 MODE_NAMES = {0: "Reset", 1: "Calibration", 2: "Motor active"}
-
-
-def drain(bus):
-    while bus.recv(timeout=0.0) is not None:
-        pass
 
 
 def channel_for_id(motor_id):

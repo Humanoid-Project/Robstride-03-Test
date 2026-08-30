@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from common import (
     DEFAULT_INTERFACE, HOST_ID, SPECS,
     RUN_MODE_INDEX, RUN_MODE_OPERATION,
-    Motor, channel_for_id, active_brake,
+    FeedbackHub, Motor, channel_for_id, active_brake,
 )
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -137,6 +137,8 @@ def capture_channel(channel, motor_ids, args, rows, lock, notes, barrier, stop_e
             if stop_event.wait(0.01):
                 return
 
+        hub = FeedbackHub(bus, motors.values(), host_id=args.host_id)
+
         try:
             barrier.wait(timeout=5.0)
         except threading.BrokenBarrierError:
@@ -151,16 +153,15 @@ def capture_channel(channel, motor_ids, args, rows, lock, notes, barrier, stop_e
                 if stop_event.is_set():
                     break
                 motor.control(pos=0.0, vel=0.0, kp=0.0, kd=args.kd, torque=0.0)
-                fb = motor.poll_feedback(timeout=args.feedback_timeout)
+                position = hub.wait_for(motor_id, timeout=args.feedback_timeout)
                 t_recv = time.monotonic()
-                if fb is None:
+                if position is None:
                     with lock:
                         rows.append((t_recv, motor_id, "", "", "", "", "miss"))
                     continue
-                _, pos, vel, tq, temp, fault = fb
                 with lock:
-                    rows.append((t_recv, motor_id, f"{pos:.6f}", f"{vel:.6f}",
-                                 f"{tq:.4f}", f"{temp:.1f}", "ok"))
+                    rows.append((t_recv, motor_id, f"{motor.last_position:.6f}", f"{motor.last_velocity:.6f}",
+                                 f"{motor.last_torque:.4f}", f"{motor.last_temp:.1f}", "ok"))
         normal_completion = not stop_event.is_set()
     except (OSError, can.CanError) as error:
         with lock:

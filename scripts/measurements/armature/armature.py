@@ -14,6 +14,7 @@ from common import (
     RUN_MODE_INDEX, RUN_MODE_OPERATION, MECH_POS_INDEX, FAULT_STA_INDEX,
     Motor, channel_for_id, decode_fault_bits, active_brake,
     validate_args, report_invalid_args,
+    DEFAULT_LIMIT_MARGIN_RAD, exceeds_joint_limit,
 )
 
 ARG_CHECKS = [
@@ -44,12 +45,15 @@ def parse_args():
     p.add_argument("--torques", type=float, nargs="+", required=True,
                    help="측정할 피드포워드 토크 목록(N*m, 부호 있음)")
     p.add_argument("--repeats", type=positive_int, default=1, help="토크별 반복 횟수, 기본 1")
+    p.add_argument("--ignore-joint-limit", action="store_true",
+                   help="관절한계 체크를 건너뜀 (무부하 벤치 테스트일 때만)")
     p.set_defaults(
         interface=DEFAULT_INTERFACE, host_id=HOST_ID,
         max_vel=5.0, max_time=2.0, max_turns=3.0,
         settle_pos_tol=0.01, settle_time=0.3, settle_timeout=5.0,
         settle_max_vel=3.0, feedback_timeout=0.3,
         poll_timeout=0.03, rate=0.0, out=None,
+        limit_margin=DEFAULT_LIMIT_MARGIN_RAD,
     )
     return p.parse_args()
 
@@ -62,7 +66,8 @@ def confirm(args, model):
     print(f"  채널          : {args.channel}")
     print(f"  인가 토크     : {args.torques} N*m x {args.repeats}회")
     print(f"  정지 조건     : |vel|>={args.max_vel} rad/s, "
-          f"t>={args.max_time}s, |dpos|>={args.max_turns} turn")
+          f"t>={args.max_time}s, |dpos|>={args.max_turns} turn, "
+          f"관절한계{'(무시함)' if args.ignore_joint_limit else f'(margin {args.limit_margin} rad)'}")
     print("  전제: 출력축에 부하(크랭크/링크) 없음, 벤치에 고정된 상태")
     print("=" * 70)
     if any(abs(torque) > rated for torque in args.torques):
@@ -152,6 +157,11 @@ def run_capture(motor, torque_cmd, pos_start, args):
             if abs(vel) >= args.max_vel:
                 stop_reason = "max_vel"
                 break
+            if not args.ignore_joint_limit and exceeds_joint_limit(pos, args.motor_id, args.limit_margin):
+                print(f"\n  관절한계 도달: pos={pos:+.4f} rad ({math.degrees(pos):+.1f} deg) — "
+                      "즉시 정지합니다.")
+                stop_reason = "joint_limit"
+                break
             if abs(pos - pos_start) >= args.max_turns * 2.0 * math.pi:
                 stop_reason = "max_turns"
                 break
@@ -211,6 +221,12 @@ def capture_once(args, torque, run_index):
                   "위 메시지 참고). 모터 상태를 확인하세요.")
             motor.stop()
             return 1, None, "not_settled"
+        if not args.ignore_joint_limit and exceeds_joint_limit(pos_start, args.motor_id, args.limit_margin):
+            print(f"오류: 정지 위치({pos_start:+.4f} rad = {math.degrees(pos_start):+.1f} deg)가 "
+                  "이미 관절한계(margin 포함) 밖입니다. zero_position 정렬이 URDF와 맞는지, "
+                  "또는 실제로 하드스톱 근처인지 확인하세요. 중단합니다.")
+            motor.stop()
+            return 1, None, "initial_joint_limit"
         print(f"정지 확인됨 (기준 위치 {pos_start:+.4f} rad). 토크 스텝 인가...")
 
         rows, stop_reason, fault_count = run_capture(motor, args.torque, pos_start, args)

@@ -52,13 +52,15 @@ def parse_args():
     p.add_argument("--signs", type=int, nargs="+", choices=[1, -1], default=[1, -1],
                    help="측정 방향, 기본: 1 -1")
     p.add_argument("--repeats", type=positive_int, default=3, help="방향별 반복 횟수, 기본 3")
+    p.add_argument("--ignore-joint-limit", action="store_true",
+                   help="관절한계 체크를 건너뜀 (무부하 벤치 테스트일 때만)")
     p.set_defaults(
         interface=DEFAULT_INTERFACE, host_id=HOST_ID,
         start_torque=0.02, step=0.02, probe_time=0.3,
         move_threshold=0.03, max_torque=1.0, max_vel=3.0, max_time=30.0,
         settle_pos_tol=0.01, settle_time=0.3, settle_timeout=5.0,
         settle_max_vel=3.0, feedback_timeout=0.3, out=None,
-        limit_margin=DEFAULT_LIMIT_MARGIN_RAD, ignore_joint_limit=False,
+        limit_margin=DEFAULT_LIMIT_MARGIN_RAD,
     )
     return p.parse_args()
 
@@ -141,19 +143,27 @@ def wait_settled(motor, hold_pos, args):
     return None
 
 
-def return_to_zero(motor, timeout=2.5, kp=15.0, kd=3.0, pos_tol=0.02):
-
-
-    deadline = time.monotonic() + timeout
-    last_pos = 0.0
+def return_to_zero(motor, timeout=2.5, kp=15.0, kd=3.0, pos_tol=0.02, max_speed=0.4):
+    fb = motor.poll_feedback(timeout=0.1)
+    if fb is None:
+        print("  경고: 복귀 시작 위치를 읽지 못했습니다 — 정지만 전송합니다.")
+        return None
+    _, start_pos, _, _, _, _ = fb
+    ramp_time = max(0.5, abs(start_pos) / max_speed)
+    deadline = time.monotonic() + max(timeout, ramp_time + 0.5)
+    ramp_start = time.monotonic()
+    last_pos = start_pos
     while time.monotonic() < deadline:
-        motor.control(pos=0.0, vel=0.0, kp=kp, kd=kd, torque=0.0)
+        progress = min(1.0, (time.monotonic() - ramp_start) / ramp_time)
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        target = start_pos * (1.0 - smooth)
+        motor.control(pos=target, vel=0.0, kp=kp, kd=kd, torque=0.0)
         fb = motor.poll_feedback(timeout=0.05)
         if fb is None:
             continue
         _, pos, vel, tq, temp, fault = fb
         last_pos = pos
-        if abs(pos) <= pos_tol and abs(vel) < 0.05:
+        if progress >= 1.0 and abs(pos) <= pos_tol and abs(vel) < 0.05:
             return last_pos
     print(f"  경고: {timeout}s 안에 0으로 복귀 못 함 (마지막 위치 {last_pos:+.4f} rad) — "
           "다음 측정 전 read_joint_values.py로 확인 권장.")

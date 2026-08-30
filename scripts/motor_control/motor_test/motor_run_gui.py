@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 
 import can
 
+from robonex_common.joints import JOINT_BY_ID, JOINT_LIMITS_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import (
     HOST_ID,
@@ -43,12 +44,18 @@ SAFE_MAX_RETURN_KP = 8.0
 SAFE_MAX_RETURN_KD = 5.0
 SAFE_OVERSPEED_STOP = 2.0
 SAFE_CLOSE_TIMEOUT = 90.0
+SAFE_FEEDBACK_TIMEOUT = 0.3
 
 MECH_POS_INDEX = MECHANICAL_POSITION_INDEX
 OPERATION_RUN_MODE = RUN_MODE_OPERATION
 
 RS03_SPEC = MOTOR_SPECS["rs03"]
 RS02_SPEC = MOTOR_SPECS["rs02"]
+
+
+def default_model_for(motor_id):
+    joint = JOINT_BY_ID.get(motor_id)
+    return joint.motor_model if joint is not None else "rs03"
 
 def parse_feedback(msg, host_id, motor_id, spec):
     if msg is None or not msg.is_extended_id:
@@ -425,6 +432,9 @@ class MotorController(threading.Thread):
         self.publish_status(status)
         motor.write_uint8_parameter(RUN_MODE_INDEX, OPERATION_RUN_MODE)
         feedback = motor.enable()
+        if feedback is None:
+            self.publish_status("Enable failed: no feedback")
+            return False
         self.enabled = True
         self.command_velocity = 0.0
         self.target_velocity = 0.0
@@ -447,6 +457,29 @@ class MotorController(threading.Thread):
         finally:
             self.enabled = False
             self.publish_status(f"Overspeed stop ({feedback['velocity']:+.2f} rad/s)")
+        return True
+
+    def stop_on_stale_feedback(self, motor):
+        with self.lock:
+            feedback_timestamp = self.state["feedback_timestamp"]
+        if feedback_timestamp <= 0.0:
+            return False
+        age = time.monotonic() - feedback_timestamp
+        if age <= SAFE_FEEDBACK_TIMEOUT:
+            return False
+
+        with self.lock:
+            self.target_velocity = 0.0
+            self.command_velocity = 0.0
+            self.position_hold_target = None
+            self.state["target_velocity"] = 0.0
+            self.state["command_velocity"] = 0.0
+
+        try:
+            motor.stop()
+        finally:
+            self.enabled = False
+            self.publish_status(f"Feedback timeout stop ({age:.2f}s)")
         return True
 
     def move_to_position(self, motor, target_position, status, hold_after=False,
@@ -510,7 +543,7 @@ class MotorController(threading.Thread):
             dt = max(1e-4, now - last_time)
             last_time = now
             self.publish_feedback(feedback, now, dt)
-            if self.stop_on_overspeed(motor, feedback):
+            if self.stop_on_overspeed(motor, feedback) or self.stop_on_stale_feedback(motor):
                 with self.lock:
                     self.motion_active = False
                 return False
@@ -537,7 +570,7 @@ class MotorController(threading.Thread):
                 torque=0.0,
             )
             self.publish_feedback(feedback, now, 0.0)
-            if self.stop_on_overspeed(motor, feedback):
+            if self.stop_on_overspeed(motor, feedback) or self.stop_on_stale_feedback(motor):
                 with self.lock:
                     self.motion_active = False
                 return False
@@ -664,10 +697,13 @@ class MotorController(threading.Thread):
                 if pending_enable and not self.enabled:
                     motor.write_uint8_parameter(RUN_MODE_INDEX, OPERATION_RUN_MODE)
                     feedback = motor.enable()
-                    self.enabled = True
-                    self.command_velocity = 0.0
-                    self.publish_status("Enabled" if feedback else "Enabled, waiting for feedback")
-                    self.publish_feedback(feedback, now, dt)
+                    if feedback is None:
+                        self.publish_status("Enable failed: no feedback")
+                    else:
+                        self.enabled = True
+                        self.command_velocity = 0.0
+                        self.publish_status("Enabled")
+                        self.publish_feedback(feedback, now, dt)
 
                 if pending_stop and self.enabled:
                     target_velocity = 0.0
@@ -710,7 +746,8 @@ class MotorController(threading.Thread):
                             torque=0.0,
                         )
                     self.publish_feedback(feedback, now, dt)
-                    self.stop_on_overspeed(motor, feedback)
+                    if not self.stop_on_overspeed(motor, feedback):
+                        self.stop_on_stale_feedback(motor)
 
                 if now >= next_vbus_poll:
                     vbus, feedback = motor.read_float_parameter(VBUS_INDEX, timeout=0.015)
@@ -1082,7 +1119,8 @@ class MotorPanel:
             messagebox.showerror("Invalid angle", f"{self.spec.name}: target angle must be a number in degrees.")
             return
         target_rad = math.radians(angle_deg)
-        clamped = clamp(target_rad, self.spec.p_min, self.spec.p_max)
+        limits = JOINT_LIMITS_BY_ID.get(self.current_motor_id, (self.spec.p_min, self.spec.p_max))
+        clamped = clamp(target_rad, *limits)
         if abs(clamped - target_rad) > 1e-9:
             self.target_angle_var.set(f"{math.degrees(clamped):.1f}")
         self.set_velocity(0.0, send=False)
@@ -1258,8 +1296,8 @@ def parse_args(argv=None):
         "--model",
         choices=["rs02", "rs03"],
         nargs="+",
-        default=["rs03"],
-        help="one shared model or one model per motor, default: rs03",
+        default=None,
+        help="one shared model or one model per motor, default: auto from each ID's registered joint",
     )
     parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="host CAN ID used in the private protocol, default: 0xFD")
     args = parser.parse_args(argv)
@@ -1267,7 +1305,9 @@ def parse_args(argv=None):
         parser.error("--motor-id accepts one or two IDs")
     if len(set(args.motor_id)) != len(args.motor_id):
         parser.error("--motor-id values must be different")
-    if len(args.model) == 1:
+    if args.model is None:
+        args.model = [default_model_for(motor_id) for motor_id in args.motor_id]
+    elif len(args.model) == 1:
         args.model *= len(args.motor_id)
     elif len(args.model) != len(args.motor_id):
         parser.error("--model must be given once or once per motor")

@@ -49,10 +49,12 @@ def parse_args():
     p.add_argument("--speeds", type=float, nargs="+", required=True,
                    help="측정할 목표 속도 목록(rad/s, 부호 있음)")
     p.add_argument("--repeats", type=positive_int, default=1, help="속도별 반복 횟수, 기본 1")
+    p.add_argument("--ignore-joint-limit", action="store_true",
+                   help="관절한계 체크를 건너뜀 (무부하 벤치 테스트일 때만)")
     p.set_defaults(
         interface=DEFAULT_INTERFACE, host_id=HOST_ID,
         kd=2.0, hold_time=1.5, ramp_time=0.5, max_turns=0.5,
-        limit_margin=DEFAULT_LIMIT_MARGIN_RAD, ignore_joint_limit=False,
+        limit_margin=DEFAULT_LIMIT_MARGIN_RAD,
         feedback_timeout=0.3, out=None,
     )
     return p.parse_args()
@@ -138,17 +140,26 @@ def ramp_to_speed(motor, target_speed, kd, pos_ref, args, label):
     return True, last_pos, last_vel, "ok"
 
 
-def return_to_zero(motor, timeout=2.5, kp=15.0, kd=3.0, pos_tol=0.02):
-    deadline = time.monotonic() + timeout
-    last_pos = 0.0
+def return_to_zero(motor, timeout=2.5, kp=15.0, kd=3.0, pos_tol=0.02, max_speed=0.4):
+    fb = motor.poll_feedback(timeout=0.1)
+    if fb is None:
+        return None
+    _, start_pos, _, _, _, _ = fb
+    ramp_time = max(0.5, abs(start_pos) / max_speed)
+    deadline = time.monotonic() + max(timeout, ramp_time + 0.5)
+    ramp_start = time.monotonic()
+    last_pos = start_pos
     while time.monotonic() < deadline:
-        motor.control(pos=0.0, vel=0.0, kp=kp, kd=kd, torque=0.0)
+        progress = min(1.0, (time.monotonic() - ramp_start) / ramp_time)
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        target = start_pos * (1.0 - smooth)
+        motor.control(pos=target, vel=0.0, kp=kp, kd=kd, torque=0.0)
         fb = motor.poll_feedback(timeout=0.05)
         if fb is None:
             continue
         _, pos, vel, tq, temp, fault = fb
         last_pos = pos
-        if abs(pos) <= pos_tol and abs(vel) < 0.05:
+        if progress >= 1.0 and abs(pos) <= pos_tol and abs(vel) < 0.05:
             break
     return last_pos
 
