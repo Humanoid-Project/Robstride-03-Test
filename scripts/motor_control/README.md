@@ -64,7 +64,7 @@ python3 scripts/motor_control/motor_test/motor_run_gui.py \
 ```bash
 # Example
 cd ~/humanoid_project
-git clone https://github.com/Humanoid-Project/IMU_N100_Test.git
+git clone https://github.com/Humanoid-Project/imu-n100-test.git IMU_N100_Test
 
 cmake -S IMU_N100_Test/src/cpp_n100 \
   -B IMU_N100_Test/src/cpp_n100/build \
