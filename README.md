@@ -1,11 +1,11 @@
-# Robstride-Motor-Test
+# robstride-motor-test
 
 ## Setup
 ```bash
 cd ~/humanoid_project
 git clone https://github.com/Humanoid-Project/robonex-common.git
-git clone https://github.com/Humanoid-Project/Robstride-Motor-Test.git
-cd Robstride-Motor-Test
+git clone https://github.com/Humanoid-Project/robstride-motor-test.git
+cd robstride-motor-test
 source ../robonex-common/setup/setup.sh IMU_N100_Test
 ```
 

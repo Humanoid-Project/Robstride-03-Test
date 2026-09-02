@@ -76,7 +76,7 @@ cmake --build IMU_N100_Test/src/cpp_n100/build -j
 
 ```bash
 # Example
-cd ~/humanoid_project/Robstride-Motor-Test
+cd ~/humanoid_project/robstride-motor-test
 source .venv/bin/activate
 
 cmake -S scripts/motor_control/motor_with_imu_test \
