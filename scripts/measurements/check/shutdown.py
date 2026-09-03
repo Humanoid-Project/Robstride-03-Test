@@ -8,12 +8,11 @@ from robonex_common.can import Motor, drain
 from robonex_common.joints import CHANNEL_MOTOR_IDS, JOINT_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID
+from robonex_common.joints import channel_for_motor_id as channel_for_id
 
 MODE_NAMES = {0: "Reset", 1: "Calibration", 2: "Motor active"}
 
 
-def channel_for_id(motor_id):
-    return JOINT_BY_ID[motor_id].channel
 
 
 def parse_args():

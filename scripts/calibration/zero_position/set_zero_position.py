@@ -21,17 +21,13 @@ from robonex_common.protocol import (
     build_arbitration_id,
     parse_arbitration_id,
 )
+from robonex_common.joints import channel_for_motor_id as channel_for_id
 
 SAVE_PAYLOAD = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
 TWO_PI = 2.0 * math.pi
 JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 
 
-def channel_for_id(motor_id):
-    for channel, motor_ids in CHANNEL_MOTOR_IDS.items():
-        if motor_id in motor_ids:
-            return channel
-    raise ValueError(f"No CAN channel for motor ID {motor_id}")
 
 
 def joint_name(motor_id):

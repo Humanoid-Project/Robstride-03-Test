@@ -10,9 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import can
 import n100
 from robonex_common.can import FeedbackHub, Motor
+from robonex_common.imu import DEFAULT_IMU_PORT, MOUNT_ROLL_DEG
 from robonex_common.joints import ACTUATED_JOINTS, JOINT_LIMITS_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID, clamp
+from robonex_common.joints import channel_for_motor_id as channel_for_id
 
 DEG = math.pi / 180.0
 
@@ -53,7 +55,6 @@ MOTIONS = {
     },
 }
 
-MOUNT_ROLL_DEG = 180.0
 PITCH_THRESHOLD_DEG = 10.0
 PITCH_SIGN = 1
 ZERO_TIME = 0.5
@@ -74,11 +75,6 @@ CHANNEL_ID_RANGES = {
 SPECS = MOTOR_SPECS
 
 
-def channel_for_id(motor_id):
-    for channel, id_range in CHANNEL_ID_RANGES.items():
-        if motor_id in id_range:
-            return channel
-    raise ValueError(f"No CAN channel for motor ID {motor_id}")
 
 
 def pump_and_check(hubs, motors):
@@ -186,7 +182,7 @@ def measure_pitch_offset(driver):
 def main():
     parser = argparse.ArgumentParser(
         description="Trigger motor motions from IMU pitch.")
-    parser.add_argument("--imu-port", default="/dev/ttyUSB0", help="IMU serial port")
+    parser.add_argument("--imu-port", default=DEFAULT_IMU_PORT, help="IMU serial port")
     parser.add_argument("--channels", nargs="+", default=list(CHANNEL_ID_RANGES),
                         choices=list(CHANNEL_ID_RANGES), help="CAN channels to use")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")

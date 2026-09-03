@@ -7,10 +7,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_PORT = "/dev/ttyUSB0"
-DEFAULT_BAUD = 921600
+from robonex_common.imu import DEFAULT_IMU_BAUDRATE as DEFAULT_BAUD
+from robonex_common.imu import DEFAULT_IMU_PORT as DEFAULT_PORT
+from robonex_common.imu import MOUNT_ROLL_DEG
 DEFAULT_DURATION = 10.0
-MOUNT_ROLL_DEG = 180.0
 DEG = 3.141592653589793 / 180.0
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

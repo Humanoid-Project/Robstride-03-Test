@@ -9,6 +9,7 @@ from robonex_common.can import FeedbackHub, Motor
 from robonex_common.joints import ACTUATED_JOINTS
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID, clamp
+from robonex_common.joints import channel_for_motor_id as channel_for_id
 
 CHANNEL_ID_RANGES = {
     "can0": range(1, 7),
@@ -41,11 +42,6 @@ SPECS = MOTOR_SPECS
 JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 
 
-def channel_for_id(motor_id):
-    for channel, id_range in CHANNEL_ID_RANGES.items():
-        if motor_id in id_range:
-            return channel
-    raise ValueError(f"No CAN channel for motor ID {motor_id}")
 
 
 def fmt(rad):

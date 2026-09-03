@@ -10,6 +10,7 @@ from pathlib import Path
 import can
 
 from robonex_common.joints import ACTUATED_JOINTS, CHANNEL_MOTOR_IDS
+from robonex_common.imu import DEFAULT_IMU_PORT, MOUNT_ROLL_DEG
 from robonex_common.protocol import (
     COMM_PARAMETER_READ,
     DEFAULT_INTERFACE,
@@ -21,12 +22,11 @@ from robonex_common.protocol import (
 )
 
 DEG = math.pi / 180.0
-MOUNT_ROLL_DEG = 180.0
 PRINT_HZ = 10
 JOINT_MAP = {joint.motor_id: joint.hardware_name for joint in ACTUATED_JOINTS}
 
 parser = argparse.ArgumentParser(description="Print live motor pos/vel plus N100 IMU values.")
-parser.add_argument("--imu-port", default="/dev/ttyUSB0")
+parser.add_argument("--imu-port", default=DEFAULT_IMU_PORT)
 parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS),
                     choices=list(CHANNEL_MOTOR_IDS))
 parser.add_argument("--n100-dir",

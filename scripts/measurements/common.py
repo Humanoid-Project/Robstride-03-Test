@@ -3,15 +3,18 @@ import time
 
 from robonex_common.can import FeedbackHub, Motor
 from robonex_common.joints import ACTUATED_JOINTS, JOINT_LIMITS_BY_ID
+from robonex_common.joints import channel_for_motor_id as channel_for_id
 from robonex_common.limits import DEFAULT_LIMIT_MARGIN_RAD, exceeds_joint_limit, joint_limit_for
 from robonex_common.motors import MOTOR_SPECS, PEAK_TORQUE, RATED_TORQUE
 from robonex_common.protocol import (
     DEFAULT_INTERFACE,
+    FAULT_BIT_NAMES,
     FAULT_STATUS_INDEX,
     HOST_ID,
     MECHANICAL_POSITION_INDEX,
     RUN_MODE_INDEX,
     RUN_MODE_OPERATION,
+    decode_fault_bits,
 )
 
 SPECS = MOTOR_SPECS
@@ -21,32 +24,6 @@ MECH_POS_INDEX = MECHANICAL_POSITION_INDEX
 FAULT_STA_INDEX = FAULT_STATUS_INDEX
 PLACEHOLDER_ARMATURE = {"rs02": 0.003, "rs03": 0.017}
 PLACEHOLDER_DAMPING = {"rs02": 0.2, "rs03": 0.2}
-
-FAULT_BIT_NAMES = {
-    0: "Overtemperature (>145C)",
-    1: "Driver chip fault",
-    2: "Undervoltage (<12V)",
-    3: "Overvoltage (>60V)",
-    4: "Phase B overcurrent",
-    5: "Phase C overcurrent",
-    7: "Encoder not calibrated",
-    8: "Hardware identification fault",
-    9: "Position initialization fault",
-    14: "Stall overload",
-    16: "Phase A overcurrent",
-}
-
-
-def channel_for_id(motor_id):
-    joint = next((joint for joint in ACTUATED_JOINTS if joint.motor_id == motor_id), None)
-    if joint is None:
-        raise ValueError(f"No CAN channel for motor ID {motor_id}")
-    return joint.channel
-
-
-def decode_fault_bits(value):
-    return [name for bit, name in FAULT_BIT_NAMES.items() if value & (1 << bit)]
-
 
 def validate_args(args, model, checks):
     spec = SPECS[model]
