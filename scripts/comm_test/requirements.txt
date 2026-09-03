@@ -1,4 +1,0 @@
-numpy>=1.24
-onnxruntime>=1.17
-pybind11>=2.11
-python-can>=4.3,<5
