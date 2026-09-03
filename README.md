@@ -3,13 +3,15 @@
 ## Setup
 ```bash
 cd ~/humanoid_project
-git clone https://github.com/Humanoid-Project/robonex-common.git
 git clone https://github.com/Humanoid-Project/robstride-motor-test.git
+git clone https://github.com/Humanoid-Project/imu-n100-test.git IMU_N100_Test
 cd robstride-motor-test
-source ../robonex-common/setup/setup.sh IMU_N100_Test
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Shared across repos — see [`robonex-common/setup/SETUP.md`](https://github.com/Humanoid-Project/robonex-common/blob/main/setup/SETUP.md).
+`robonex-common` is pinned in `requirements.txt` — see [`robonex-common/setup/SETUP.md`](https://github.com/Humanoid-Project/robonex-common/blob/main/setup/SETUP.md).
 
 <br>
 
