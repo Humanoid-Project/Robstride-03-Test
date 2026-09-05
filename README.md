@@ -2,6 +2,7 @@
 
 ## Setup
 ```bash
+# Example
 cd ~/humanoid_project
 git clone https://github.com/Humanoid-Project/robstride-motor-test.git
 git clone https://github.com/Humanoid-Project/imu-n100-test.git IMU_N100_Test

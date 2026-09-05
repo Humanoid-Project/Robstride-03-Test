@@ -45,9 +45,8 @@ def stats(values):
 
 def main():
     p = argparse.ArgumentParser(
-        description="can_capture.py 출력 CSV를 모아 정지 상태의 pos/vel 노이즈 통계(평균/표준편차/"
-                     "최대-최소)를 계산한다 (project-open-items #10: RL observation noise model 근거).")
-    p.add_argument("csv_files", nargs="+", help="can_capture.py 출력 CSV들 (glob 가능)")
+        description="Calculate stationary motor position and velocity noise from motor_noise.py CSV files.")
+    p.add_argument("csv_files", nargs="+", help="CSV paths or glob patterns")
     args = p.parse_args()
 
     paths = []
@@ -61,8 +60,8 @@ def main():
         meta, rows = load_rows(path)
         source = meta.get("feedback_source")
         if source != EXPECTED_FEEDBACK_SOURCE:
-            print(f"지원하지 않는 피드백 출처: {path} "
-                  f"(expected={EXPECTED_FEEDBACK_SOURCE}, got={source or '메타데이터 없음'})")
+            print(f"ERROR: Unsupported feedback source in {path} "
+                  f"(expected={EXPECTED_FEEDBACK_SOURCE}, got={source or 'missing'})")
             return 1
         for row in rows:
             if row["status"] != "ok":
@@ -70,13 +69,11 @@ def main():
             by_motor[int(row["motor_id"])].append(row)
 
     if not by_motor:
-        print("유효한(status=ok) 샘플이 없습니다.")
+        print("ERROR: No valid samples.")
         return 1
 
-    print("=" * 104)
     print(f"{'ID':>3} {'joint':<18} {'n':>6} "
-          f"{'pos평균(rad)':>13} {'pos표준편차(rad)':>16} {'pos p-p(rad)':>13} "
-          f"{'vel표준편차(rad/s)':>18}")
+          f"{'pos mean':>13} {'pos std':>16} {'pos p-p':>13} {'vel std':>18}")
     print("-" * 104)
     for motor_id in sorted(by_motor):
         rows = by_motor[motor_id]
@@ -86,14 +83,11 @@ def main():
         print(f"{motor_id:>3} {joint:<18} {pos['n']:>6} "
               f"{pos['mean']:>+13.6f} {pos['std']:>16.6f} {pos['pp']:>13.6f} "
               f"{vel['std']:>18.6f}")
-        drift_flag = "  ⚠ 첫/끝 표본 간 pos 차이가 표준편차의 5배 이상 — 진짜 정지였는지 확인 필요"
+        drift_flag = "  WARNING: Position drift exceeds 5x the standard deviation."
         first_last_gap = abs(float(rows[-1]["pos_rad"]) - float(rows[0]["pos_rad"]))
         if pos["std"] > 0 and first_last_gap > 5 * pos["std"]:
             print(drift_flag)
-    print("=" * 104)
-    print("\n주의: 이 표준편차는 순수 encoder/신호 노이즈만이 아니라 CAN 프레임 타이밍 지터, "
-          "정지마찰 근처의 미세한 안착(settling) 움직임이 섞인 값이다. RL observation noise cfg에 "
-          "넣기 전에 관절별로 이상치(비정상적으로 큰 std)가 없는지 먼저 확인할 것.")
+    print("Noise includes encoder noise, CAN timing jitter, and physical settling motion.")
     return 0
 
 

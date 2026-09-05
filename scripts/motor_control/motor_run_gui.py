@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 
 import can
 
-from robonex_common.joints import JOINT_BY_ID, JOINT_LIMITS_BY_ID
+from robonex_common.joints import JOINT_BY_ID, JOINT_LIMITS_BY_ID, channel_for_motor_id
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import (
     HOST_ID,
@@ -27,7 +27,6 @@ from robonex_common.protocol import (
 )
 
 DEFAULT_MOTOR_ID = 5
-DEFAULT_CHANNEL = "can0"
 DEFAULT_INTERFACE = "socketcan"
 
 KP_MIN = 0.0
@@ -960,11 +959,7 @@ class MotorPanel:
         device = ttk.Frame(self.frame)
         device.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(device, text="Model", width=6).pack(side=tk.LEFT)
-        model_box = ttk.Combobox(
-            device, textvariable=self.model_var, values=list(self.available_specs.keys()),
-            state="readonly", width=5,
-        )
-        model_box.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(device, textvariable=self.model_var, width=5).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Label(device, text="ID", width=3).pack(side=tk.LEFT)
         entry = ttk.Entry(device, textvariable=self.motor_id_var, width=5)
         entry.pack(side=tk.LEFT)
@@ -1078,7 +1073,9 @@ class MotorPanel:
             if conflict:
                 messagebox.showerror("Motor ID", conflict)
                 return
-        self.spec = self.available_specs[self.model_var.get()]
+        joint = JOINT_BY_ID[motor_id]
+        self.spec = MOTOR_SPECS[joint.motor_model]
+        self.model_var.set(self.spec.name)
         self._stop_controller()
         self.set_velocity(0.0, send=False)
         self.graph.reset()
@@ -1212,6 +1209,7 @@ class MotorRunApp:
     def __init__(self, root, args):
         self.root = root
         self.closing = False
+        self.channel = args.channel
         root.title(args.window_title)
         root.geometry(args.geometry)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -1246,6 +1244,11 @@ class MotorRunApp:
         self.update_loop()
 
     def validate_motor_id(self, panel, motor_id):
+        joint = JOINT_BY_ID.get(motor_id)
+        if joint is None:
+            return f"Motor ID {motor_id} is not registered."
+        if channel_for_motor_id(motor_id) != self.channel:
+            return f"Motor ID {motor_id} is not on {self.channel}."
         for other in self.panels:
             if other is not panel and other.current_motor_id == motor_id:
                 return f"Motor ID {motor_id} is already assigned to another panel."
@@ -1283,8 +1286,6 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="GUI speed/position control and live plotting for one or two daisy-chained motors."
     )
-    parser.add_argument("--channel", default=DEFAULT_CHANNEL, help="CAN channel, default: can0")
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can interface, default: socketcan")
     parser.add_argument(
         "--motor-id",
         type=parse_motor_id,
@@ -1292,25 +1293,21 @@ def parse_args(argv=None):
         default=[DEFAULT_MOTOR_ID],
         help="one or two motor CAN IDs, default: 5",
     )
-    parser.add_argument(
-        "--model",
-        choices=["rs02", "rs03"],
-        nargs="+",
-        default=None,
-        help="one shared model or one model per motor, default: auto from each ID's registered joint",
-    )
-    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="host CAN ID used in the private protocol, default: 0xFD")
     args = parser.parse_args(argv)
     if not 1 <= len(args.motor_id) <= 2:
         parser.error("--motor-id accepts one or two IDs")
     if len(set(args.motor_id)) != len(args.motor_id):
         parser.error("--motor-id values must be different")
-    if args.model is None:
-        args.model = [default_model_for(motor_id) for motor_id in args.motor_id]
-    elif len(args.model) == 1:
-        args.model *= len(args.motor_id)
-    elif len(args.model) != len(args.motor_id):
-        parser.error("--model must be given once or once per motor")
+    unknown_ids = [motor_id for motor_id in args.motor_id if motor_id not in JOINT_BY_ID]
+    if unknown_ids:
+        parser.error(f"unregistered motor ID: {unknown_ids[0]}")
+    channels = {channel_for_motor_id(motor_id) for motor_id in args.motor_id}
+    if len(channels) != 1:
+        parser.error("two motor IDs must use the same CAN channel")
+    args.channel = channels.pop()
+    args.interface = DEFAULT_INTERFACE
+    args.host_id = HOST_ID
+    args.model = [default_model_for(motor_id) for motor_id in args.motor_id]
     args.window_title = "Motor Run" if len(args.motor_id) == 1 else "Daisy-Chain Motor Run"
     args.geometry = "480x900" if len(args.motor_id) == 1 else "900x900"
     args.panels = []

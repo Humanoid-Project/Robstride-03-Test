@@ -8,252 +8,217 @@ measurements/
 ├── common.py
 ├── armature/
 │   ├── armature.py
-│   ├── analyze_armature.py
-│   └── data/
+│   └── analyze_armature.py
 ├── check/
 │   └── shutdown.py
 ├── damping/
 │   ├── damping.py
-│   ├── analyze_damping.py
-│   └── data/
+│   └── analyze_damping.py
 ├── friction/
 │   ├── friction.py
-│   ├── analyze_friction.py
-│   └── data/
+│   └── analyze_friction.py
 ├── joint/
 │   ├── read_joint_values.py
-│   ├── read_joint_with_imu.py
-│   ├── scan_joint_limits.py
-│   └── joint_limit/
+│   └── scan_joint_limits.py
 └── noise/
-    ├── imu/
-    │   ├── imu_capture.py
-    │   ├── analyze_imu_noise.py
-    │   └── data/
-    └── can/
-        ├── can_capture.py
-        ├── analyze_can_noise.py
-        ├── analyze_can_rate.py
-        └── data/
+    ├── motor/
+    │   ├── motor_noise.py
+    │   ├── analyze_can_noise.py
+    │   └── analyze_can_rate.py
+    └── imu/
+        ├── CMakeLists.txt
+        ├── imu_noise.py
+        ├── n100_binding.cpp
+        └── analyze_imu_noise.py
 ```
-
-<br>
 
 ## armature
 
+Armature is the rotational inertia that resists angular acceleration, measured in kg·m².
+
 ### `armature.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | Target motor ID |
-| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
-| `--channel` | No | Auto from ID | Target CAN channel |
-| `--torques` | Yes | - | List of test torques (N·m, signed) |
-| `--repeats` | No | `1` | Repeats per torque |
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--motor-id` | - | Select the motor |
+| - | `--model` | - | Select `rs02` or `rs03` |
+| - | `--torques` | - | Set test torques in N·m |
+| - | `--repeats` | `1` | Set repeats per torque |
+| - | `--ignore-joint-limit` | Off | Disable joint-limit checks |
 
 ```bash
 # Example
-python3 scripts/measurements/armature/armature.py \
-  --motor-id 11 \
-  --model rs02 \
-  --channel can1 \
-  --torques 0.3 0.5 1.0 1.5 2.0 \
-  --repeats 1
+python3 scripts/measurements/armature/armature.py --motor-id 11 --model rs02 --torques 0.3 0.5 1.0
 ```
 
 ### `analyze_armature.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
-| `--skip-ms` | No | `15` | Startup transient to exclude (ms) |
-
 ```bash
 # Example
-python3 scripts/measurements/armature/analyze_armature.py \
-  "scripts/measurements/armature/data/id11_rs02_*.csv"
+python3 scripts/measurements/armature/analyze_armature.py "scripts/measurements/armature/data/*.csv"
 ```
-
-<br>
 
 ## check
 
 ### `shutdown.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | CAN channels to use |
-| `--ids` | No | `1~12` (from selected channels) | Target motor IDs |
-| `--interface` | No | `socketcan` | python-can interface |
-| `--host-id` | No | `0xFD` | Host CAN ID |
-| `--brake-time` | No | `0.3` | Braking time before disable (s); `0` disables immediately |
-| `--kd` | No | `3.0` | Damping gain during the braking phase |
+Applies velocity damping, disables the selected motors, and verifies their operating mode before power-off.
+
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--ids` | `1~12` | Select motors to disable |
+| - | `--brake-time` | `0.3` | Set braking time in seconds |
+| - | `--kd` | `3.0` | Set braking damping gain |
 
 ```bash
 # Example
 python3 scripts/measurements/check/shutdown.py
 ```
 
-<br>
-
 ## damping
+
+Damping is the velocity-proportional resisting torque, measured in N·m/(rad/s).
 
 ### `damping.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | Target motor ID |
-| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
-| `--channel` | No | Auto from ID | Target CAN channel |
-| `--speeds` | Yes | - | List of target speeds (rad/s, signed) |
-| `--repeats` | No | `1` | Repeats per speed |
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--motor-id` | - | Select the motor |
+| - | `--model` | - | Select `rs02` or `rs03` |
+| - | `--speeds` | - | Set test speeds in rad/s |
+| - | `--repeats` | `1` | Set repeats per speed |
+| - | `--ignore-joint-limit` | Off | Disable joint-limit checks |
 
 ```bash
 # Example
-python3 scripts/measurements/damping/damping.py \
-  --motor-id 4 \
-  --model rs03 \
-  --channel can0 \
-  --speeds 0.15 0.20 0.28 \
-  --repeats 1
+python3 scripts/measurements/damping/damping.py --motor-id 4 --model rs03 --speeds 0.15 0.20 0.28
 ```
 
 ### `analyze_damping.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
-| `--skip-s` | No | `0.1` | Startup settling time to exclude (s) |
-
 ```bash
 # Example
-python3 scripts/measurements/damping/analyze_damping.py \
-  "scripts/measurements/damping/data/id4_rs03_*.csv"
+python3 scripts/measurements/damping/analyze_damping.py "scripts/measurements/damping/data/*.csv"
 ```
-
-<br>
 
 ## friction
 
+Friction is the breakaway torque required to start a stationary joint moving, measured in N·m.
+
 ### `friction.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--motor-id` | Yes | - | Target motor ID |
-| `--model` | Yes | - | Motor model (`rs02`, `rs03`) |
-| `--channel` | No | Auto from ID | Target CAN channel |
-| `--signs` | No | `1 -1` | Test direction(s) (`1`, `-1`) |
-| `--repeats` | No | `3` | Repeats per direction |
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--motor-id` | - | Select the motor |
+| - | `--model` | - | Select `rs02` or `rs03` |
+| - | `--signs` | `1 -1` | Select positive (`1`) or negative (`-1`) motor torque directions |
+| - | `--repeats` | `1` | Set repeats per direction |
+| - | `--ignore-joint-limit` | Off | Disable joint-limit checks |
 
 ```bash
 # Example
-python3 scripts/measurements/friction/friction.py \
-  --motor-id 4 \
-  --model rs03 \
-  --channel can0 \
-  --signs 1 -1 \
-  --repeats 3
+python3 scripts/measurements/friction/friction.py --motor-id 4 --model rs03
 ```
 
 ### `analyze_friction.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `csv_files` | Yes | - | CSV file(s) to analyze, or a glob |
-
 ```bash
 # Example
-python3 scripts/measurements/friction/analyze_friction.py \
-  "scripts/measurements/friction/data/id4_rs03_*.csv"
+python3 scripts/measurements/friction/analyze_friction.py "scripts/measurements/friction/data/*.csv"
 ```
-
-<br>
 
 ## joint
 
 ### `read_joint_values.py`
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--channels` | No | `can0 can1` | CAN channels to check |
-| `--interface` | No | `socketcan` | python-can interface |
-| `--host-id` | No | `0xFD` | Host CAN ID |
-| `--timeout` | No | `0.1` | Per-motor response timeout (s); `0.02` with `--watch` |
-| `--watch` | No | Off | Continuously print joint values |
-| `--interval` | No | `0.1` | Refresh interval for `--watch` (s) |
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--watch` | Off | Continuously refresh joint values |
 
 ```bash
 # Example
 python3 scripts/measurements/joint/read_joint_values.py --watch
 ```
 
-### `read_joint_with_imu.py`
-
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--imu-port` | No | `/dev/ttyUSB0` | N100 serial port |
-| `--channels` | No | `can0 can1` | CAN channels to check |
-| `--n100-dir` | No | Auto-detected | Folder containing `n100*.so` |
-| `--no-imu` | No | Off | Print motor values only, without the IMU |
-| `--timeout` | No | `0.02` | Per-motor response timeout (s) |
-
-```bash
-# Example
-python3 scripts/measurements/joint/read_joint_with_imu.py \
-  --imu-port /dev/ttyUSB0 \
-  --n100-dir scripts/motor_control/motor_with_imu_test
-```
-
 ### `scan_joint_limits.py`
 
-Tracks live min/max while the joint is moved by hand; press Enter to save.
+Tracks the minimum and maximum mechanical positions while each joint is moved by hand, then saves the results as CSV.
 
-| Option | Required | Default | Description |
-| --- | :---: | --- | --- |
-| `--motor-id` | No | `1~12` | Motor IDs to track |
-| `--interface` | No | `socketcan` | python-can interface |
-| `--host-id` | No | `0xFD` | Host CAN ID |
-| `--timeout` | No | `0.1` | Per-motor `mechPos` response wait (s) |
-| `--interval` | No | `0.1` | Screen refresh interval (s) |
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--motor-id`, `--motor-ids` | `1~12` | Select motors to scan |
 
 ```bash
 # Example
 python3 scripts/measurements/joint/scan_joint_limits.py --motor-id 5 6
 ```
 
-| Output | Description |
-| --- | --- |
-| `joint/joint_limit/*.csv` | Recorded min/max per motor |
+## noise/motor
 
-<br>
+### `motor_noise.py`
 
-## noise
+Enables stationary motors with velocity damping and records type `0x02` position, velocity, torque, temperature, and timestamps to CSV.
 
-### IMU
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--motor-id` | `1~12` | Select one or more motors to capture |
+| - | `--duration` | `60` | Set simultaneous capture time per active CAN channel |
 
 ```bash
 # Example
-python3 scripts/measurements/noise/imu/imu_capture.py \
-  --port /dev/ttyUSB0 \
-  --duration 60 \
-  --tag imu_only_01
-
-python3 scripts/measurements/noise/imu/analyze_imu_noise.py \
-  "scripts/measurements/noise/imu/data/imu_capture_imu_only_01_*.csv"
+python3 scripts/measurements/noise/motor/motor_noise.py --motor-id 1 2 3 --duration 60
 ```
 
-### CAN
+### `analyze_can_noise.py`
 
-- `type_0x02`: real-time feedback frame (pos/vel/torque/temp), returned in response to a `control()` command.
-- `type_0x11`: parameter-read command, e.g. `mechPos` (`0x7019`) / `mechVel` (`0x701B`).
+Calculates per-motor position mean, position noise, peak-to-peak variation, and velocity noise from motor noise files.
 
 ```bash
 # Example
-python3 scripts/measurements/noise/can/can_capture.py --duration 10
+python3 scripts/measurements/noise/motor/analyze_can_noise.py "scripts/measurements/noise/motor/data/*.csv"
+```
 
-python3 scripts/measurements/noise/can/analyze_can_noise.py \
-  "scripts/measurements/noise/can/data/can_capture_*.csv"
+### `analyze_can_rate.py`
 
-python3 scripts/measurements/noise/can/analyze_can_rate.py \
-  "scripts/measurements/noise/can/data/can_capture_*.csv"
+Calculates successful response rate, missed replies, update frequency, and timing jitter for each motor and CAN channel.
+
+```bash
+# Example
+python3 scripts/measurements/noise/motor/analyze_can_rate.py "scripts/measurements/noise/motor/data/*.csv"
+```
+
+## noise/imu
+
+### Python Binding
+
+```bash
+# Example
+cmake -S scripts/measurements/noise/imu \
+  -B scripts/measurements/noise/imu/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPython3_EXECUTABLE="$(pwd)/.venv/bin/python"
+cmake --build scripts/measurements/noise/imu/build -j
+```
+
+### `imu_noise.py`
+
+Records stationary N100 raw and fused gyroscope data, acceleration, temperature, and timestamps to CSV.
+
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--port` | `/dev/ttyUSB0` | Select the IMU serial port |
+| - | `--duration` | `60` | Set capture time in seconds |
+
+```bash
+# Example
+python3 scripts/measurements/noise/imu/imu_noise.py --duration 60
+```
+
+### `analyze_imu_noise.py`
+
+Combines IMU noise files and calculates per-axis gyroscope bias and noise for raw and fused signals.
+
+```bash
+# Example
+python3 scripts/measurements/noise/imu/analyze_imu_noise.py "scripts/measurements/noise/imu/data/*.csv"
 ```

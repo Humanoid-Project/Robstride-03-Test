@@ -5,8 +5,7 @@
 __pycache__/
 *.pyc
 
-scripts/motor_control/motor_with_imu_test/build/
-scripts/motor_control/motor_with_imu_test/n100_cpp/build/
+scripts/measurements/noise/imu/build/
 scripts/measurements/**/logs/
 scripts/measurements/**/data/
 scripts/measurements/joint/joint_limit/

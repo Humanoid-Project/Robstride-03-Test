@@ -37,20 +37,19 @@ PAUSE_S = 1.0
 def positive_int(value):
     value = int(value)
     if value < 1:
-        raise argparse.ArgumentTypeError("1 이상의 정수여야 합니다")
+        raise argparse.ArgumentTypeError("Must be an integer of 1 or greater")
     return value
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="damping 측정 및 분석")
+    p = argparse.ArgumentParser(description="Measure and analyze motor damping.")
     p.add_argument("--motor-id", type=lambda v: int(v, 0), required=True)
     p.add_argument("--model", choices=list(SPECS.keys()), required=True)
-    p.add_argument("--channel", default=None, help="기본값: motor-id로 자동 판단 (can0/can1)")
     p.add_argument("--speeds", type=float, nargs="+", required=True,
-                   help="측정할 목표 속도 목록(rad/s, 부호 있음)")
-    p.add_argument("--repeats", type=positive_int, default=1, help="속도별 반복 횟수, 기본 1")
+                   help="Signed target speeds in rad/s")
+    p.add_argument("--repeats", type=positive_int, default=1, help="Repeats per speed")
     p.add_argument("--ignore-joint-limit", action="store_true",
-                   help="관절한계 체크를 건너뜀 (무부하 벤치 테스트일 때만)")
+                   help="Disable joint-limit checks for unloaded bench tests only")
     p.set_defaults(
         interface=DEFAULT_INTERFACE, host_id=HOST_ID,
         kd=2.0, hold_time=1.5, ramp_time=0.5, max_turns=0.5,
@@ -61,44 +60,31 @@ def parse_args():
 
 
 def confirm(args, model):
-    print("=" * 70)
-    print("damping 측정 및 분석")
-    print(f"  모터 ID       : {args.motor_id} ({model.upper()})")
-    print(f"  채널          : {args.channel}")
-    print(f"  목표 속도     : {args.speeds} rad/s x {args.repeats}회")
-    print(f"  램프 대기     : {args.ramp_time}s (고정, vel 노이즈로 자동판정 안 함)")
-    print(f"  기록 시간     : {args.hold_time}s")
-    print(f"  안전한계(부차): |dpos|>={args.max_turns} turn")
+    print(f"Motor: ID {args.motor_id}, {model.upper()}, {args.channel}")
+    print(f"Speeds: {args.speeds} rad/s x {args.repeats}")
     if args.ignore_joint_limit:
-        print("  ⚠⚠ --ignore-joint-limit 켜짐 — 관절한계 체크 없이 자유회전 전제로 실행합니다.")
-        print("     출력축이 실제로 무부하 상태가 아니면 위험합니다.")
+        print("WARNING: Joint-limit checks are disabled. Use only with an unloaded output.")
     else:
         lo, hi = JOINT_LIMITS_RAD.get(args.motor_id, (None, None))
         if lo is None:
-            print(f"  오류: motor-id {args.motor_id}에 대한 JOINT_LIMITS_RAD 항목이 없습니다 — "
-                  "common.py에 추가하거나 --ignore-joint-limit(무부하일 때만)로 실행하세요.")
+            print(f"ERROR: No joint limit is defined for motor ID {args.motor_id}.")
         else:
             lo_m, hi_m = joint_limit_for(args.motor_id, args.limit_margin)
-            print(f"  관절한계(URDF): {math.degrees(lo):+.1f} ~ {math.degrees(hi):+.1f} deg"
-                  f"  (여유 {math.degrees(args.limit_margin):.1f}deg 적용 후 "
-                  f"{math.degrees(lo_m):+.1f} ~ {math.degrees(hi_m):+.1f} deg에서 자동 정지)")
+            print(f"Joint limit: {math.degrees(lo_m):+.1f} to {math.degrees(hi_m):+.1f} deg")
             worst_travel = max(abs(speed) for speed in args.speeds) * (args.ramp_time + args.hold_time)
             usable_range = hi_m - lo_m
-            print(f"  최악 이동각   : |speed|x(ramp+hold) = {math.degrees(worst_travel):.1f} deg "
-                  f"(가동범위 {math.degrees(usable_range):.1f}deg의 {100*worst_travel/usable_range:.0f}%)")
+            print(f"Maximum planned travel: {math.degrees(worst_travel):.1f} deg "
+                  f"({100*worst_travel/usable_range:.0f}% of usable range)")
             if worst_travel > usable_range:
-                print("  ⚠ 목표속도로 끝까지 못 갈 가능성이 높습니다 — 관절한계에 먼저 걸려 "
-                      "hold_time을 다 못 채우고 조기 중단될 것으로 예상됩니다. 정속구간 데이터가 "
-                      "부족하면 --speed를 낮추거나 --hold-time을 줄이세요.")
-    print("  전제: zero_position 캘리브레이션 완료(모터 zero == URDF zero), 링크 연결된 실물 상태")
-    print("=" * 70)
+                print("WARNING: Planned travel exceeds the usable joint range.")
+    print("WARNING: Verify zero calibration, secure the robot, and prepare the E-stop.")
     if not sys.stdin.isatty():
-        print("확인 입력이 필요합니다. 대화형 터미널에서 실행하세요.")
+        print("ERROR: Run this command in an interactive terminal.")
         return False
     try:
-        input("\n시작하려면 Enter, 취소하려면 Ctrl-C: ")
+        input("Press Enter to continue or Ctrl-C to cancel: ")
     except (KeyboardInterrupt, EOFError):
-        print("\n취소됨.")
+        print("\nCancelled.")
         return False
     return True
 
@@ -117,7 +103,7 @@ def ramp_to_speed(motor, target_speed, kd, pos_ref, args, label):
             if now - last_ok > args.feedback_timeout:
                 print()
                 return False, last_pos, last_vel, "feedback_lost"
-            status = f"[{label}] 응답 없음 ({now - last_ok:.2f}s)"
+            status = f"[{label}] no reply ({now - last_ok:.2f}s)"
         else:
             last_ok = now
             _, pos, vel, tq, temp, fault = fb
@@ -128,8 +114,7 @@ def ramp_to_speed(motor, target_speed, kd, pos_ref, args, label):
             if (not args.ignore_joint_limit and target_speed != 0.0
                     and exceeds_joint_limit(pos, args.motor_id, args.limit_margin)):
                 print()
-                print(f"  [{label}] 관절한계 도달: pos={pos:+.4f} rad "
-                      f"({math.degrees(pos):+.1f} deg) — 즉시 정지합니다.")
+                print(f"[{label}] Joint limit reached at {pos:+.4f} rad ({math.degrees(pos):+.1f} deg).")
                 return False, last_pos, last_vel, "joint_limit"
             status = (f"[{label}] pos={pos:+.4f}  vel={vel:+.3f}  target={target_speed:+.3f}  "
                       f"tq={tq:+.3f} N*m")
@@ -189,8 +174,7 @@ def run_hold(motor, target_speed, kd, pos_ref, args):
             stop_reason = "max_turns"
             break
         if not args.ignore_joint_limit and exceeds_joint_limit(pos, args.motor_id, args.limit_margin):
-            print(f"\n  관절한계 도달: pos={pos:+.4f} rad ({math.degrees(pos):+.1f} deg) — "
-                  "기록 중단, 즉시 감속합니다.")
+            print(f"\nJoint limit reached at {pos:+.4f} rad ({math.degrees(pos):+.1f} deg).")
             stop_reason = "joint_limit"
             break
         if abs(vel) >= limit:
@@ -222,17 +206,16 @@ def capture_once(args, speed, run_index):
         time.sleep(0.02)
         initial_pos = motor.read_param_f32(MECH_POS_INDEX, timeout=0.3)
         if initial_pos is None:
-            print(f"오류: 모터 ID {args.motor_id} 가 {args.channel} 에서 응답하지 않습니다.")
+            print(f"ERROR: Motor ID {args.motor_id} did not reply on {args.channel}.")
             return 1, None, "no_response"
-        print(f"현재 위치: {initial_pos:+.4f} rad ({math.degrees(initial_pos):+.2f} deg)")
+        print(f"Position: {initial_pos:+.4f} rad ({math.degrees(initial_pos):+.2f} deg)")
 
         fault_reg = motor.read_param(FAULT_STA_INDEX, fmt="<I", timeout=0.3)
         if fault_reg is None:
-            print("폴트 레지스터(0x3022) 읽기 실패 (무시하고 진행)")
+            print("WARNING: Fault register 0x3022 could not be read.")
         else:
             bits = decode_fault_bits(fault_reg)
-            print(f"폴트 레지스터(0x3022) = 0x{fault_reg:08X}" +
-                  (f"  -> {', '.join(bits)}" if bits else "  (정상)"))
+            print(f"Fault register: 0x{fault_reg:08X}" + (f" ({', '.join(bits)})" if bits else " (OK)"))
 
         motor.write_param_u8(RUN_MODE_INDEX, RUN_MODE_OPERATION)
         time.sleep(0.01)
@@ -247,47 +230,42 @@ def capture_once(args, speed, run_index):
                 pos_ref = fb0[1]
                 break
         if pos_ref is None:
-            print("오류: 실시간 피드백(type 0x02)을 받지 못해 안전한계 기준점을 못 잡았습니다. "
-                  "CAN 상태를 확인하세요 (ip link show).")
+            print("ERROR: No type 0x02 feedback; safety reference unavailable.")
             return 1, None, "no_realtime_feedback"
 
         if not args.ignore_joint_limit:
             lo, hi = JOINT_LIMITS_RAD.get(args.motor_id, (None, None))
             if lo is None:
-                print(f"오류: motor-id {args.motor_id}에 대한 JOINT_LIMITS_RAD 항목이 없습니다.")
+                print(f"ERROR: No joint limit is defined for motor ID {args.motor_id}.")
                 return 1, None, "missing_joint_limit"
-            print(f"관절한계(URDF, margin 적용 전): {math.degrees(lo):+.1f} ~ {math.degrees(hi):+.1f} deg")
+            print(f"URDF joint limit: {math.degrees(lo):+.1f} to {math.degrees(hi):+.1f} deg")
             if exceeds_joint_limit(pos_ref, args.motor_id, args.limit_margin):
-                print(f"오류: 현재 위치({pos_ref:+.4f} rad = {math.degrees(pos_ref):+.1f} deg)가 "
-                      "이미 관절한계(margin 포함) 밖입니다. zero_position 정렬이 URDF와 맞는지, "
-                      "또는 실제로 하드스톱 근처인지 확인하세요. 중단합니다.")
+                print(f"ERROR: Position {pos_ref:+.4f} rad ({math.degrees(pos_ref):+.1f} deg) is outside the joint limit.")
                 motor.stop()
                 return 1, None, "initial_joint_limit"
             lo_m, hi_m = joint_limit_for(args.motor_id, args.limit_margin)
             room = (hi_m - pos_ref) if args.speed > 0 else (pos_ref - lo_m)
-            print(f"명령 방향으로 남은 여유: {math.degrees(room):.1f} deg "
-                  f"(목표속도 {args.speed:+.2f} rad/s 기준)")
+            print(f"Available travel: {math.degrees(room):.1f} deg")
 
-        print(f"목표 속도 {args.speed:+.3f} rad/s 로 {args.ramp_time}s 접근...")
+        print(f"Ramping to {args.speed:+.3f} rad/s...")
         ok, pos_now, vel_now, ramp_reason = ramp_to_speed(
             motor, args.speed, args.kd, pos_ref, args, "ramp-up")
         if not ok:
-            print(f"오류: 램프 중 중단됨 (사유={ramp_reason}).")
+            print(f"ERROR: Ramp stopped ({ramp_reason}).")
             return 1, None, ramp_reason
         if args.speed != 0 and (vel_now == 0.0 or vel_now / args.speed < 0):
-            print(f"경고: 속도가 목표 방향으로 안 붙는 것 같습니다 (vel={vel_now:+.3f}, "
-                  f"target={args.speed:+.3f}). kd를 올리거나 ramp-time을 늘려보세요.")
-        print(f"램프 종료 (pos={pos_now:+.4f} rad, vel={vel_now:+.3f} rad/s). 정속 구간 기록 시작...")
+            print(f"WARNING: Velocity {vel_now:+.3f} does not track target {args.speed:+.3f} rad/s.")
+        print(f"Recording at pos={pos_now:+.4f} rad, vel={vel_now:+.3f} rad/s...")
 
         rows, stop_reason = run_hold(motor, args.speed, args.kd, pos_ref, args)
 
-        print("감속 중...")
+        print("Decelerating...")
         ramp_to_speed(motor, 0.0, args.kd, None, args, "ramp-down")
-        print("0으로 복귀 중...")
+        print("Returning to zero...")
         final_pos = return_to_zero(motor)
-        print(f"복귀 완료: pos={final_pos:+.4f} rad ({math.degrees(final_pos):+.2f} deg)")
+        print(f"Return position: {final_pos:+.4f} rad ({math.degrees(final_pos):+.2f} deg)")
     except KeyboardInterrupt:
-        print("\n\n중단됨 (Ctrl-C).")
+        print("\nInterrupted.")
         stop_reason = "keyboard_interrupt"
     finally:
         if motor is not None:
@@ -302,7 +280,7 @@ def capture_once(args, speed, run_index):
         bus.shutdown()
 
     if not rows:
-        print(f"샘플이 하나도 기록되지 않았습니다 (stop_reason={stop_reason}). CAN 응답을 확인하세요.")
+        print(f"ERROR: No samples recorded ({stop_reason}).")
         return 1, None, stop_reason
 
     duration = rows[-1][0] - rows[0][0]
@@ -310,14 +288,10 @@ def capture_once(args, speed, run_index):
     mean_tq = sum(r[3] for r in rows) / len(rows)
     achieved_hz = (len(rows) - 1) / duration if duration > 0 else 0.0
 
-    print(f"\n캡처 종료: {stop_reason}")
-    print(f"  샘플 수       : {len(rows)}")
-    print(f"  구간          : {duration*1000:.1f} ms")
-    print(f"  달성 폴링율   : {achieved_hz:.0f} Hz")
-    print(f"  평균 vel      : {mean_vel:+.4f} rad/s (명령 {args.speed:+.3f}, kd={args.kd})")
-    print(f"  평균 tq       : {mean_tq:+.4f} N*m")
+    print(f"Capture: {stop_reason}, samples={len(rows)}, duration={duration*1000:.1f} ms, "
+          f"rate={achieved_hz:.0f} Hz, mean vel={mean_vel:+.4f}, mean torque={mean_tq:+.4f} N*m")
     if len(rows) < 30:
-        print("  경고: 샘플이 30개 미만입니다. --hold-time 을 늘려 재시도 권장.")
+        print("WARNING: Fewer than 30 samples were recorded.")
 
     ts = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
     fname = (f"id{args.motor_id}_{args.model}_{args.speed:+.3f}rads_{ts}_r{run_index:02d}.csv"
@@ -337,21 +311,20 @@ def capture_once(args, speed, run_index):
         "duration_s": f"{duration:.4f}",
     }
     save_csv(out_path, rows, meta)
-    print(f"\n저장됨: {out_path}")
+    print(f"Saved: {out_path}")
     return (0 if stop_reason == "hold_time" else 1), out_path, stop_reason
 
 
 def main():
     args = parse_args()
-    if args.channel is None:
-        args.channel = channel_for_id(args.motor_id)
+    args.channel = channel_for_id(args.motor_id)
 
     for speed in args.speeds:
         args.speed = speed
         if report_invalid_args(validate_args(args, args.model, ARG_CHECKS)):
             return 1
     if args.kd > SPECS[args.model].kd_max:
-        print(f"내부 설정 오류: kd({args.kd})가 {args.model.upper()} 상한을 초과합니다.")
+        print(f"ERROR: Internal kd {args.kd} exceeds the {args.model.upper()} limit.")
         return 1
     if not confirm(args, args.model):
         return 1
@@ -360,19 +333,19 @@ def main():
     paths = []
     failed = False
     for index, speed in enumerate(plan, 1):
-        print(f"\n{'=' * 70}\n[{index}/{len(plan)}] speed={speed:+.3f} rad/s\n{'=' * 70}")
+        print(f"\n[{index}/{len(plan)}] speed={speed:+.3f} rad/s")
         rc, path, stop_reason = capture_once(args, speed, index)
         if rc == 0 and path is not None:
             paths.append(path)
         if rc != 0 or stop_reason == "keyboard_interrupt":
             failed = True
-            print("안전을 위해 남은 반복 측정을 중단합니다.")
+            print("Stopping the remaining runs for safety.")
             break
         if index < len(plan):
             time.sleep(PAUSE_S)
 
     if paths:
-        print("\n이번 실행에서 생성된 CSV를 분석합니다.\n")
+        print("\nAnalyzing captured CSV files...")
         analysis = subprocess.run([sys.executable, ANALYZE, *paths])
         failed = failed or analysis.returncode != 0
     return 1 if failed or not paths else 0

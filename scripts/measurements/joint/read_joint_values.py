@@ -153,20 +153,12 @@ def watch_channels(channels, interface, host_id, timeout, interval):
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Print mechanical joint angles for the selected motor IDs.")
-    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_MOTOR_IDS),
-                        choices=list(CHANNEL_MOTOR_IDS),
-                        help=f"CAN channels. Default: {' '.join(CHANNEL_MOTOR_IDS)}")
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE,
-                        help="python-can interface")
-    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID,
-                        help="Host CAN ID")
-    parser.add_argument("--timeout", type=float, default=None,
-                        help=f"Per-motor reply wait in seconds. Default: {ONESHOT_TIMEOUT} "
-                             f"({WATCH_TIMEOUT} with --watch)")
     parser.add_argument("--watch", action="store_true",
                         help="Keep refreshing instead of printing once")
-    parser.add_argument("--interval", type=float, default=0.1,
-                        help="Screen refresh period with --watch, seconds")
+    parser.set_defaults(
+        channels=list(CHANNEL_MOTOR_IDS), interface=DEFAULT_INTERFACE,
+        host_id=HOST_ID, timeout=None, interval=0.1,
+    )
     return parser.parse_args()
 
 

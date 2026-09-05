@@ -10,7 +10,7 @@ from pathlib import Path
 from robonex_common.imu import DEFAULT_IMU_BAUDRATE as DEFAULT_BAUD
 from robonex_common.imu import DEFAULT_IMU_PORT as DEFAULT_PORT
 from robonex_common.imu import MOUNT_ROLL_DEG
-DEFAULT_DURATION = 10.0
+DEFAULT_DURATION = 60.0
 DEG = 3.141592653589793 / 180.0
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -18,18 +18,14 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="IMU(N100)가 완전히 정지한 상태에서 gyro(fused/raw) 샘플을 원시 기록한다. "
-                     "분석은 analyze_imu_noise.py가 담당한다 (project-open-items #12: "
-                     "RL observation noise cfg 근거).")
+        description="Capture raw and fused N100 gyroscope samples while stationary.")
     p.add_argument("--port", default=DEFAULT_PORT)
-    p.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     p.add_argument("--duration", type=float, default=DEFAULT_DURATION,
-                   help="측정 시간(초), 기본 10")
-    p.add_argument("--n100-dir",
-                   default=str(Path(__file__).resolve().parents[3]
-                               / "motor_control" / "motor_with_imu_test"),
-                   help="n100*.so 가 있는 폴더")
-    p.add_argument("--tag", default="", help="출력 CSV 파일명에 붙일 태그")
+                   help="Capture time in seconds")
+    p.set_defaults(
+        baud=DEFAULT_BAUD,
+        n100_dir=str(Path(__file__).resolve().parent),
+    )
     return p.parse_args()
 
 
@@ -40,18 +36,13 @@ def main():
     try:
         import n100
     except ImportError as e:
-        print(f"n100 모듈 임포트 실패: {e}")
+        print(f"ERROR: Failed to import n100: {e}")
         print(f"  cd {args.n100_dir} && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "
               f"&& cmake --build build -j")
-        print("  경로가 다르면 --n100-dir 로 지정")
         return 1
 
-    print("=" * 70)
-    print("IMU gyro bias/noise 원시 캡처")
-    print(f"  포트      : {args.port} @ {args.baud}")
-    print(f"  측정 시간 : {args.duration:.1f}s")
-    print("  전제      : 로봇/IMU가 완전히 정지한 상태 (흔들리면 노이즈가 과장되게 측정됨)")
-    print("=" * 70)
+    print(f"Capturing IMU data from {args.port} at {args.baud} baud for {args.duration:.1f}s.")
+    print("Keep the IMU completely stationary.")
 
     driver = n100.ImuDriver(n100.DriverConfig(
         port=args.port, baudrate=args.baud,
@@ -60,13 +51,12 @@ def main():
     try:
         driver.start()
     except RuntimeError as e:
-        print(f"IMU 시작 실패: {e}")
-        print(f"  ls /dev/ttyUSB* /dev/ttyACM*   (권한: sudo chmod 666 {args.port})")
+        print(f"ERROR: Failed to start the IMU: {e}")
         return 1
 
     first = driver.wait_for_sample(timeout=3.0)
     if first is None:
-        print(f"3초 내 무응답: {driver.last_error() or '원인 불명'}")
+        print(f"ERROR: No IMU sample within 3 seconds: {driver.last_error() or 'unknown error'}")
         driver.stop()
         return 1
 
@@ -93,22 +83,21 @@ def main():
             ))
             if n % 50 == 0:
                 elapsed = time.monotonic() - t0
-                print(f"\r  샘플 {n}개  경과 {elapsed:5.1f}/{args.duration:.1f}s", end="", flush=True)
+                print(f"\rSamples: {n}, elapsed: {elapsed:5.1f}/{args.duration:.1f}s", end="", flush=True)
     except KeyboardInterrupt:
-        print("\n중단됨 (Ctrl-C).")
+        print("\nInterrupted.")
     finally:
         drv_stats = driver.stats()
         driver.stop()
 
     print()
     if not rows:
-        print("샘플이 하나도 기록되지 않았습니다.")
+        print("ERROR: No samples recorded.")
         return 1
 
     os.makedirs(DATA_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-    tag = f"_{args.tag}" if args.tag else ""
-    fname = f"imu_capture{tag}_{ts}.csv"
+    fname = f"imu_noise_{ts}.csv"
     path = os.path.join(DATA_DIR, fname)
     with open(path, "w", newline="", encoding="utf-8") as f:
         f.write(f"# port: {args.port}\n")
@@ -125,9 +114,7 @@ def main():
         for row in rows:
             writer.writerow(row)
 
-    print(f"저장됨: {path}")
-    print(f"  샘플 {len(rows)}개, driver.stats() = {drv_stats}")
-    print("  -> analyze_imu_noise.py 로 분석하세요.")
+    print(f"Saved: {path} ({len(rows)} samples, stats={drv_stats})")
     return 0
 
 

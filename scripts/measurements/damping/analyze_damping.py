@@ -13,6 +13,8 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import PLACEHOLDER_DAMPING
 
+SKIP_S = 0.1
+
 
 def load_csv(path):
     meta = {}
@@ -40,14 +42,14 @@ def r_squared(y, y_pred):
     ss_res = np.sum((y - y_pred) ** 2)
     ss_tot = np.sum((y - np.mean(y)) ** 2)
     if ss_tot == 0:
-        return 1.0
+        return 1.0 if ss_res == 0 else float("nan")
     return 1.0 - ss_res / ss_tot
 
 
 def analyze_file(path, skip_s):
     meta, rows = load_csv(path)
     if len(rows) < 5:
-        print(f"  {os.path.basename(path)}: 샘플이 너무 적습니다 ({len(rows)}개) — 건너뜀")
+        print(f"  {os.path.basename(path)}: skipped, only {len(rows)} samples")
         return None
 
     t = np.array([r[0] for r in rows])
@@ -57,7 +59,7 @@ def analyze_file(path, skip_s):
 
     mask = t >= skip_s
     if mask.sum() < 5:
-        print(f"  {os.path.basename(path)}: skip 이후 샘플이 부족합니다 — skip-s 를 줄여보세요")
+        print(f"  {os.path.basename(path)}: too few samples remain after the fixed 0.1 s startup skip")
         return None
 
     vel_m, tq_m = vel[mask], tq[mask]
@@ -68,9 +70,9 @@ def analyze_file(path, skip_s):
 
     warn = ""
     if abs(omega - speed_cmd) > max(0.3, 0.15 * abs(speed_cmd)):
-        warn += f"  ⚠ 목표({speed_cmd:+.3f})와 실측 평균 속도 차이가 큼"
+        warn += f"  WARNING: measured speed differs from target {speed_cmd:+.3f}"
     if faults:
-        warn += f"  (참고: fault 바이트 {len(faults)}건, 의미 불명 — 무시)"
+        warn += f"  WARNING: {len(faults)} fault samples"
 
     print(f"  {os.path.basename(path)}: speed_cmd={speed_cmd:+.3f}  omega_meas={omega:+.4f}"
           f"(±{omega_std:.3f})  tau_meas={tau:+.4f} N*m  n={mask.sum()}{warn}")
@@ -86,10 +88,8 @@ def analyze_file(path, skip_s):
 
 
 def main():
-    p = argparse.ArgumentParser(description="정속 구간 CSV들을 묶어 damping(b) 계산")
-    p.add_argument("csv_files", nargs="+", help="damping.py 출력 CSV들 (glob 가능)")
-    p.add_argument("--skip-s", type=float, default=0.1,
-                   help="각 시행 기록 시작부에서 건너뛸 시간(초), 잔여 정착 여유용. 기본 0.1")
+    p = argparse.ArgumentParser(description="Calculate damping from constant-speed CSV files.")
+    p.add_argument("csv_files", nargs="+", help="CSV paths or glob patterns")
     args = p.parse_args()
 
     paths = []
@@ -98,18 +98,18 @@ def main():
         paths.extend(matched if matched else [pattern])
     paths = list(dict.fromkeys(paths))
 
-    print(f"입력 파일 {len(paths)}개\n")
-    results = [r for r in (analyze_file(path, args.skip_s) for path in paths) if r is not None]
+    print(f"Files: {len(paths)}")
+    results = [r for r in (analyze_file(path, SKIP_S) for path in paths) if r is not None]
 
     if len(results) < 2:
-        print("\n유효한 시행이 2개 미만입니다. 서로 다른 속도로 최소 2회(권장 3~4회, 방향도 섞어서) 필요합니다.")
+        print("ERROR: At least two valid runs with different speeds are required.")
         return 1
 
     models = {r["model"] for r in results}
     motor_ids = {r["motor_id"] for r in results}
     if len(models) > 1 or len(motor_ids) > 1:
-        print(f"\n경고: 입력 파일들의 model/motor_id가 섞여 있습니다 (models={models}, motor_ids={motor_ids}). "
-              "같은 모터로 측정한 파일만 같이 넘기세요.")
+        print(f"ERROR: Mixed models or motor IDs: models={models}, motor_ids={motor_ids}.")
+        return 1
 
     omega = np.array([r["omega"] for r in results])
     tau = np.array([r["tau"] for r in results])
@@ -133,35 +133,32 @@ def main():
         except np.linalg.LinAlgError:
             stderr = None
 
-    print("\n" + "=" * 60)
-    print("결과 (tau = b * omega + c * sign(omega) 회귀)")
-    print("=" * 60)
-    print(f"  b (damping, 출력축 기준) = {b:.6f} N*m/(rad/s)"
-          + (f"  (±{stderr[0]:.6f}, 1-sigma)" if stderr is not None else "  (점 부족, 불확실도 계산 불가 — 3점 이상 권장)"))
-    print(f"  c (방향별 쿨롱마찰 근사) = {c:+.4f} N*m"
+    print()
+    print("Result: tau = b * omega + c * sign(omega)")
+    print(f"  output damping b = {b:.6f} N*m/(rad/s)"
+          + (f" (±{stderr[0]:.6f}, 1-sigma)" if stderr is not None else ""))
+    print(f"  Coulomb friction c = {c:+.4f} N*m"
           + (f"  (±{stderr[1]:.6f})" if stderr is not None else "") +
-          "  (참고용, 항목4 정지마찰과 별개)")
+          "")
     print(f"  R²                        = {r2:.4f}")
 
     model = next(iter(models))
     placeholder = PLACEHOLDER_DAMPING.get(model)
     if placeholder:
         ratio = b / placeholder if placeholder else float("nan")
-        print(f"\n  현재 시뮬레이터 추정값({model}) = {placeholder} N*m/(rad/s)  →  실측/추정 비율 = {ratio:.1f}x")
+        print(f"  simulator={placeholder} N*m/(rad/s), measured/simulator={ratio:.1f}x ({model})")
 
     n_pos = int(np.sum(omega > 0))
     n_neg = int(np.sum(omega < 0))
     if n_neg == 0:
-        print(f"\n  참고: 전부 양(+) 방향 속도만 측정됨({n_pos}개). c는 그 방향의 쿨롱마찰 근사치일 뿐이고,")
-        print("        반대 방향도 같은 크기인지는 이 데이터만으로는 알 수 없음 — 방향 섞어서 재측정 권장.")
+        print(f"WARNING: Only {n_pos} positive-speed runs were measured.")
     elif n_pos == 0:
-        print(f"\n  참고: 전부 음(-) 방향 속도만 측정됨({n_neg}개). 반대 방향도 측정해 비교 권장.")
+        print(f"WARNING: Only {n_neg} negative-speed runs were measured.")
 
-    if r2 < 0.9:
-        print("\n  ⚠ R²가 낮습니다. b가 정말 속도에 무관한 상수인지(비선형 점성마찰 가능성),")
-        print("    또는 시행별 정착이 불완전했는지 확인 필요.")
+    if not np.isfinite(r2) or r2 < 0.9:
+        print("WARNING: Low R²; verify settling and possible nonlinear damping.")
 
-    print("\n각 시행:")
+    print("\nRuns:")
     print(f"  {'file':<42} {'omega':>8} {'tau':>9} {'n':>5}")
     for r in results:
         print(f"  {os.path.basename(r['path']):<42} {r['omega']:>+8.3f} {r['tau']:>+9.4f} {r['n']:>5}")

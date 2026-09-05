@@ -20,8 +20,8 @@ def load_meta(path):
 
 
 def main():
-    p = argparse.ArgumentParser(description="breakaway 측정 CSV들을 모아 정리")
-    p.add_argument("csv_files", nargs="+", help="friction.py 출력 CSV들 (glob 가능)")
+    p = argparse.ArgumentParser(description="Summarize breakaway measurements.")
+    p.add_argument("csv_files", nargs="+", help="CSV paths or glob patterns")
     args = p.parse_args()
 
     paths = []
@@ -46,17 +46,17 @@ def main():
         })
 
     if skipped:
-        print("건너뜀 (breakaway 못 찾음):")
+        print("Skipped files without a breakaway result:")
         for path, reason in skipped:
             print(f"  {os.path.basename(path)}: stop_reason={reason}")
         print()
 
     if not groups:
-        print("유효한 breakaway 측정 결과가 없습니다.")
+        print("ERROR: No valid breakaway results.")
         return 1
 
     print("=" * 72)
-    print(f"{'motor_id':>8} {'model':>6} {'sign':>5} {'n':>3} {'mid 평균':>12} {'표준편차':>10} {'브래킷 범위':>20}")
+    print(f"{'motor_id':>8} {'model':>6} {'sign':>5} {'n':>3} {'mean':>12} {'std':>10} {'bracket range':>20}")
     print("-" * 72)
     summary = {}
     for (motor_id, model, sign), entries in sorted(groups.items()):
@@ -75,7 +75,7 @@ def main():
 
     motor_ids = sorted({k[0] for k in summary})
     if len(motor_ids) > 1:
-        print("\n개체간 비교 (같은 model, 같은 sign 기준):")
+        print("\nMotor comparison by model and sign:")
         by_model_sign = defaultdict(dict)
         for (motor_id, model, sign), mean in summary.items():
             by_model_sign[(model, sign)][motor_id] = mean
@@ -84,9 +84,9 @@ def main():
                 vals = list(per_motor.items())
                 desc = ", ".join(f"ID{mid}={v:+.4f}" for mid, v in vals)
                 spread = max(v for _, v in vals) - min(v for _, v in vals)
-                print(f"  {model} sign={sign}: {desc}  (범위 {spread:.4f} N*m)")
+                print(f"  {model} sign={sign}: {desc} (range {spread:.4f} N*m)")
 
-    print("\n방향간 비교 (같은 motor_id 기준):")
+    print("\nDirection comparison by motor:")
     by_motor = defaultdict(dict)
     for (motor_id, model, sign), mean in summary.items():
         by_motor[motor_id][sign] = mean
@@ -94,10 +94,10 @@ def main():
         if "1" in per_sign and "-1" in per_sign:
             pos_v, neg_v = per_sign["1"], per_sign["-1"]
             asym = abs(abs(pos_v) - abs(neg_v))
-            print(f"  ID{motor_id}: +방향={pos_v:+.4f}  -방향={neg_v:+.4f}  "
-                  f"(크기차 {asym:.4f} N*m)")
+            print(f"  ID{motor_id}: positive={pos_v:+.4f}, negative={neg_v:+.4f}, "
+                  f"magnitude difference={asym:.4f} N*m")
         else:
-            print(f"  ID{motor_id}: 방향이 하나만 측정됨({list(per_sign.keys())}) — 반대방향도 재보면 좋음")
+            print(f"  ID{motor_id}: only signs {list(per_sign.keys())} were measured")
 
     return 0
 

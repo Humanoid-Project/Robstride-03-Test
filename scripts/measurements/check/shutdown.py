@@ -8,7 +8,6 @@ from robonex_common.can import Motor, drain
 from robonex_common.joints import CHANNEL_MOTOR_IDS, JOINT_BY_ID
 from robonex_common.motors import MOTOR_SPECS
 from robonex_common.protocol import DEFAULT_INTERFACE, HOST_ID
-from robonex_common.joints import channel_for_motor_id as channel_for_id
 
 MODE_NAMES = {0: "Reset", 1: "Calibration", 2: "Motor active"}
 
@@ -19,17 +18,12 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Brake and disable the selected motors before disconnecting power."
     )
-    parser.add_argument(
-        "--channels",
-        nargs="+",
-        default=list(CHANNEL_MOTOR_IDS),
-        choices=list(CHANNEL_MOTOR_IDS),
-    )
     parser.add_argument("--ids", type=int, nargs="+", default=None)
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE)
-    parser.add_argument("--host-id", type=lambda value: int(value, 0), default=HOST_ID)
     parser.add_argument("--brake-time", type=float, default=0.3)
     parser.add_argument("--kd", type=float, default=3.0)
+    parser.set_defaults(
+        channels=list(CHANNEL_MOTOR_IDS), interface=DEFAULT_INTERFACE, host_id=HOST_ID
+    )
     return parser.parse_args()
 
 

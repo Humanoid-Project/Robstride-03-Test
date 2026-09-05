@@ -133,35 +133,31 @@ def open_bus(channel):
         raise MotorIdError(f"Failed to open {channel}: {exc}") from exc
 
 
-def print_found(result):
-    suffix = f"  UID={result['uid']}" if result["uid"] else "  mechPos reply"
-    print(f"  [OK] ID {result['motor_id']:3d} (0x{result['motor_id']:02X}){suffix}")
+def format_found(result):
+    detail = f"UID={result['uid']}" if result["uid"] else "mechPos reply"
+    return f"ID {result['motor_id']} ({detail})"
 
 
 def scan_ids(bus, targets, timeout):
     found = {}
     for target_id in targets:
         result = probe_motor(bus, target_id, timeout)
-        if result is None:
-            print(f"  [--] ID {target_id:3d} (0x{target_id:02X})  no reply")
-        else:
+        if result is not None:
             found[target_id] = result
-            print_found(result)
         time.sleep(0.005)
     return found
 
 
-def run_check(args):
+def run_check(_args):
     failed = False
-    for channel in args.channels:
+    for channel in CHANNEL_MOTOR_IDS:
         targets = CHANNEL_MOTOR_IDS[channel]
-        print(f"{channel}: checking standard IDs {targets[0]}-{targets[-1]}")
         bus = None
         try:
             bus = open_bus(channel)
             found = scan_ids(bus, targets, SCAN_TIMEOUT)
         except MotorIdError as exc:
-            print(f"  [ERROR] {exc}")
+            print(f"{channel}: ERROR - {exc}")
             failed = True
             continue
         finally:
@@ -170,31 +166,41 @@ def run_check(args):
         missing = [motor_id for motor_id in targets if motor_id not in found]
         if missing:
             failed = True
-            print(f"  missing: {', '.join(map(str, missing))}")
+            print(f"{channel}: missing IDs {', '.join(map(str, missing))}")
         else:
-            print("  All standard IDs replied.")
+            print(f"{channel}: OK")
     return 1 if failed else 0
 
 
 def run_find(args):
-    bus = open_bus(args.channel)
-    try:
-        if args.motor_id is not None:
-            result = probe_motor(bus, args.motor_id, QUERY_TIMEOUT)
-            if result is None:
-                print(f"ID {args.motor_id} (0x{args.motor_id:02X}): no reply")
-                return 1
-            print_found(result)
-            return 0
-        print(f"{args.channel}: scanning IDs 0-{args.scan_max}")
-        found = scan_ids(bus, range(args.scan_max + 1), SCAN_TIMEOUT)
-        if not found:
-            print("No motors replied.")
-            return 1
-        print(f"Found IDs: {', '.join(map(str, sorted(found)))}")
-        return 0
-    finally:
-        bus.shutdown()
+    found_any = False
+    failed = False
+    for channel in CHANNEL_MOTOR_IDS:
+        bus = None
+        try:
+            bus = open_bus(channel)
+            if args.motor_id is not None:
+                result = probe_motor(bus, args.motor_id, QUERY_TIMEOUT)
+                if result is None:
+                    print(f"{channel}: ID {args.motor_id} not found")
+                else:
+                    print(f"{channel}: {format_found(result)}")
+                    found_any = True
+                continue
+            found = scan_ids(bus, range(128), SCAN_TIMEOUT)
+            if found:
+                found_any = True
+                results = ", ".join(format_found(found[motor_id]) for motor_id in sorted(found))
+                print(f"{channel}: {results}")
+            else:
+                print(f"{channel}: no motors found")
+        except MotorIdError as exc:
+            print(f"{channel}: ERROR - {exc}")
+            failed = True
+        finally:
+            if bus is not None:
+                bus.shutdown()
+    return 1 if failed or not found_any else 0
 
 
 def send_stop(bus, motor_id):
@@ -216,36 +222,50 @@ def verify_change(bus, current_id, new_id, previous_uid):
     old_result = probe_motor(bus, current_id, QUERY_TIMEOUT)
     if new_result is not None and old_result is None:
         if previous_uid and new_result["uid"] and previous_uid != new_result["uid"]:
-            print("Verify failed: a different UID replied on the new ID. Possible ID collision.")
+            print("ERROR: the new ID belongs to a different motor")
             return 1
-        print(f"OK: motor replies only on ID {new_id} (0x{new_id:02X}).")
+        print(f"ID changed: {current_id} -> {new_id}")
         return 0
     if new_result is None and old_result is not None:
-        print(f"Change failed: motor still replies on old ID {current_id}.")
+        print(f"ERROR: motor still uses ID {current_id}")
         return 1
     if new_result is not None and old_result is not None:
-        print("Verify failed: both old and new IDs reply. Duplicate motors or ID collision.")
+        print("ERROR: both old and new IDs replied")
         return 1
-    print("Cannot verify: neither ID replies. Power-cycle and run find.")
+    print("ERROR: ID change could not be verified")
     return 1
 
 
 def run_set(args):
     if args.current_id == args.new_id:
-        print("Current ID and new ID are the same; nothing to change.")
+        print(f"No change: ID is already {args.current_id}")
         return 0
-    bus = open_bus(args.channel)
+    buses = {}
     try:
-        current = probe_motor(bus, args.current_id, QUERY_TIMEOUT)
-        if current is None:
-            print(f"Stopped: current ID {args.current_id} did not reply.")
+        for channel in CHANNEL_MOTOR_IDS:
+            buses[channel] = open_bus(channel)
+        matches = []
+        for channel, candidate_bus in buses.items():
+            result = probe_motor(candidate_bus, args.current_id, QUERY_TIMEOUT)
+            if result is not None:
+                matches.append((channel, candidate_bus, result))
+        if not matches:
+            print(f"ERROR: ID {args.current_id} not found")
+            return 1
+        if len(matches) > 1:
+            channels = ", ".join(channel for channel, _, _ in matches)
+            print(f"ERROR: ID {args.current_id} found on multiple channels: {channels}")
+            return 1
+        channel, bus, current = matches[0]
+        if args.new_id not in CHANNEL_MOTOR_IDS[channel]:
+            valid_ids = ", ".join(str(motor_id) for motor_id in CHANNEL_MOTOR_IDS[channel])
+            print(f"ERROR: ID {args.new_id} is not assigned to {channel}; use one of: {valid_ids}")
             return 1
         occupied = probe_motor(bus, args.new_id, QUERY_TIMEOUT)
         if occupied is not None:
-            print(f"Stopped: new ID {args.new_id} already replies on {args.channel}.")
+            print(f"ERROR: ID {args.new_id} is already in use on {channel}")
             return 1
-        print("Warning: every motor that currently uses this ID will change to the new ID.")
-        print("Connect only the target motor before changing IDs.")
+        print(f"WARNING: connect only the target motor ({channel}, ID {args.current_id})")
         expected = f"CHANGE {args.current_id} {args.new_id}"
         try:
             reply = input(f"Type '{expected}' exactly to make a permanent change: ")
@@ -258,10 +278,10 @@ def run_set(args):
         time.sleep(0.05)
         send_set_id(bus, args.current_id, args.new_id)
         time.sleep(0.2)
-        print(f"Sent ID {args.current_id} -> {args.new_id}. Verifying.")
         return verify_change(bus, args.current_id, args.new_id, current["uid"])
     finally:
-        bus.shutdown()
+        for bus in buses.values():
+            bus.shutdown()
 
 
 def build_parser():
@@ -269,22 +289,13 @@ def build_parser():
     commands = parser.add_subparsers(dest="command", required=True)
 
     check = commands.add_parser("check", help="Check the standard can0/can1 ID layout")
-    check.add_argument(
-        "--channels",
-        nargs="+",
-        choices=tuple(CHANNEL_MOTOR_IDS),
-        default=list(CHANNEL_MOTOR_IDS),
-    )
     check.set_defaults(handler=run_check)
 
-    find = commands.add_parser("find", help="Search for motor IDs on one channel")
-    find.add_argument("--channel", choices=tuple(CHANNEL_MOTOR_IDS), required=True)
+    find = commands.add_parser("find", help="Search for motor IDs on can0 and can1")
     find.add_argument("--motor-id", type=parse_id)
-    find.add_argument("--scan-max", type=parse_id, default=127)
     find.set_defaults(handler=run_find)
 
     set_id = commands.add_parser("set", help="Permanently change a motor CAN ID")
-    set_id.add_argument("--channel", choices=tuple(CHANNEL_MOTOR_IDS), required=True)
     set_id.add_argument("--current-id", type=parse_id, required=True)
     set_id.add_argument("--new-id", type=parse_new_id, required=True)
     set_id.set_defaults(handler=run_set)

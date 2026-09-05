@@ -33,20 +33,19 @@ PAUSE_S = 1.0
 def positive_int(value):
     value = int(value)
     if value < 1:
-        raise argparse.ArgumentTypeError("1 이상의 정수여야 합니다")
+        raise argparse.ArgumentTypeError("Must be an integer of 1 or greater")
     return value
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="armature 측정 및 분석")
+    p = argparse.ArgumentParser(description="Measure and analyze motor armature response.")
     p.add_argument("--motor-id", type=lambda v: int(v, 0), required=True)
     p.add_argument("--model", choices=list(SPECS.keys()), required=True)
-    p.add_argument("--channel", default=None, help="기본값: motor-id로 자동 판단 (can0/can1)")
     p.add_argument("--torques", type=float, nargs="+", required=True,
-                   help="측정할 피드포워드 토크 목록(N*m, 부호 있음)")
-    p.add_argument("--repeats", type=positive_int, default=1, help="토크별 반복 횟수, 기본 1")
+                   help="Signed feedforward torques in N*m")
+    p.add_argument("--repeats", type=positive_int, default=1, help="Repeats per torque")
     p.add_argument("--ignore-joint-limit", action="store_true",
-                   help="관절한계 체크를 건너뜀 (무부하 벤치 테스트일 때만)")
+                   help="Disable joint-limit checks for unloaded bench tests only")
     p.set_defaults(
         interface=DEFAULT_INTERFACE, host_id=HOST_ID,
         max_vel=5.0, max_time=2.0, max_turns=3.0,
@@ -60,28 +59,24 @@ def parse_args():
 
 def confirm(args, model):
     rated = RATED_TORQUE[model]
-    print("=" * 70)
-    print("armature 측정 및 분석")
-    print(f"  모터 ID       : {args.motor_id} ({model.upper()})")
-    print(f"  채널          : {args.channel}")
-    print(f"  인가 토크     : {args.torques} N*m x {args.repeats}회")
-    print(f"  정지 조건     : |vel|>={args.max_vel} rad/s, "
+    print(f"Motor: ID {args.motor_id}, {model.upper()}, {args.channel}")
+    print(f"Torques: {args.torques} N*m x {args.repeats}")
+    print(f"Stop limits: |vel|>={args.max_vel} rad/s, "
           f"t>={args.max_time}s, |dpos|>={args.max_turns} turn, "
-          f"관절한계{'(무시함)' if args.ignore_joint_limit else f'(margin {args.limit_margin} rad)'}")
-    print("  전제: 출력축에 부하(크랭크/링크) 없음, 벤치에 고정된 상태")
-    print("=" * 70)
+          f"joint limit {'off' if args.ignore_joint_limit else f'margin {args.limit_margin} rad'}")
+    print("WARNING: Secure the unloaded motor to the bench before continuing.")
     if any(abs(torque) > rated for torque in args.torques):
-        print(f"경고: 일부 인가 토크가 정격({rated} N*m)을 넘습니다.")
+        print(f"WARNING: A test torque exceeds the {rated} N*m rated torque.")
     if any(abs(torque) > PEAK_TORQUE[model] for torque in args.torques):
-        print(f"오류: 피크 토크({PEAK_TORQUE[model]} N*m)를 초과하는 값이 있습니다. 중단합니다.")
+        print(f"ERROR: A test torque exceeds the {PEAK_TORQUE[model]} N*m peak torque.")
         return False
     if not sys.stdin.isatty():
-        print("확인 입력이 필요합니다. 대화형 터미널에서 실행하세요.")
+        print("ERROR: Run this command in an interactive terminal.")
         return False
     try:
-        input("\n시작하려면 Enter, 취소하려면 Ctrl-C: ")
+        input("Press Enter to continue or Ctrl-C to cancel: ")
     except (KeyboardInterrupt, EOFError):
-        print("\n취소됨.")
+        print("\nCancelled.")
         return False
     return True
 
@@ -100,13 +95,13 @@ def wait_settled(motor, hold_pos, args):
         now = time.monotonic()
         if fb is None:
             misses += 1
-            status = f"응답 없음 (miss {misses})"
+            status = f"No reply (miss {misses})"
         else:
             _, pos, vel, tq, temp, fault = fb
             last_pos = pos
             if abs(vel) >= args.settle_max_vel:
                 print()
-                print(f"  긴급정지: 정지판정 중 |vel|={vel:+.3f} rad/s 감지(한계 {args.settle_max_vel}).")
+                print(f"EMERGENCY STOP: |vel|={vel:+.3f} rad/s exceeds {args.settle_max_vel}.")
                 motor.stop()
                 return None
             if ref_pos is None or abs(pos - ref_pos) > args.settle_pos_tol:
@@ -115,14 +110,14 @@ def wait_settled(motor, hold_pos, args):
             elif now - ref_time >= args.settle_time:
                 print()
                 return last_pos
-            status = (f"pos={pos:+.4f} rad  vel={vel:+.4f} rad/s(참고용)  tq={tq:+.3f} N*m  "
-                      f"fault={fault:02X}(미검증)  quiet={now - ref_time:4.2f}/{args.settle_time:.2f}s")
+            status = (f"pos={pos:+.4f} rad  vel={vel:+.4f} rad/s  tq={tq:+.3f} N*m  "
+                      f"fault={fault:02X}  settled={now - ref_time:4.2f}/{args.settle_time:.2f}s")
         if now - last_print >= 0.05:
             print(f"\r  {status}    ", end="", flush=True)
             last_print = now
     print()
     if misses > 0:
-        print(f"  (타임아웃 동안 응답 없음 {misses}회 발생 — CAN 통신 자체가 불안정했을 수 있음)")
+        print(f"WARNING: {misses} replies were missed while waiting for the motor to settle.")
     return None
 
 
@@ -158,8 +153,7 @@ def run_capture(motor, torque_cmd, pos_start, args):
                 stop_reason = "max_vel"
                 break
             if not args.ignore_joint_limit and exceeds_joint_limit(pos, args.motor_id, args.limit_margin):
-                print(f"\n  관절한계 도달: pos={pos:+.4f} rad ({math.degrees(pos):+.1f} deg) — "
-                      "즉시 정지합니다.")
+                print(f"\nJoint limit reached at {pos:+.4f} rad ({math.degrees(pos):+.1f} deg).")
                 stop_reason = "joint_limit"
                 break
             if abs(pos - pos_start) >= args.max_turns * 2.0 * math.pi:
@@ -197,41 +191,39 @@ def capture_once(args, torque, run_index):
         time.sleep(0.02)
         initial_pos = motor.read_param_f32(MECH_POS_INDEX, timeout=0.3)
         if initial_pos is None:
-            print(f"오류: 모터 ID {args.motor_id} 가 {args.channel} 에서 응답하지 않습니다.")
+            print(f"ERROR: Motor ID {args.motor_id} did not reply on {args.channel}.")
             return 1, None, "no_response"
-        print(f"현재 위치: {initial_pos:+.4f} rad ({math.degrees(initial_pos):+.2f} deg)")
+        print(f"Position: {initial_pos:+.4f} rad ({math.degrees(initial_pos):+.2f} deg)")
 
         fault_reg = motor.read_param(FAULT_STA_INDEX, fmt="<I", timeout=0.3)
         if fault_reg is None:
-            print("폴트 레지스터(0x3022) 읽기 실패 (인덱스가 이 방식으로 안 읽힐 수 있음, 무시하고 진행)")
+            print("WARNING: Fault register 0x3022 could not be read.")
         else:
             bits = decode_fault_bits(fault_reg)
-            print(f"폴트 레지스터(0x3022) = 0x{fault_reg:08X}" +
-                  (f"  -> {', '.join(bits)}" if bits else "  (정상)"))
+            print(f"Fault register: 0x{fault_reg:08X}" +
+                  (f" ({', '.join(bits)})" if bits else " (OK)"))
 
         motor.write_param_u8(RUN_MODE_INDEX, RUN_MODE_OPERATION)
         time.sleep(0.01)
         motor.enable()
         time.sleep(0.01)
 
-        print("정지 상태 확인 중...")
+        print("Waiting for the motor to settle...")
         pos_start = wait_settled(motor, initial_pos, args)
         if pos_start is None:
-            print("오류: 정지 상태가 확인되지 않았습니다 (settle-timeout 초과 또는 긴급정지, "
-                  "위 메시지 참고). 모터 상태를 확인하세요.")
+            print("ERROR: The motor did not settle before the safety timeout.")
             motor.stop()
             return 1, None, "not_settled"
         if not args.ignore_joint_limit and exceeds_joint_limit(pos_start, args.motor_id, args.limit_margin):
-            print(f"오류: 정지 위치({pos_start:+.4f} rad = {math.degrees(pos_start):+.1f} deg)가 "
-                  "이미 관절한계(margin 포함) 밖입니다. zero_position 정렬이 URDF와 맞는지, "
-                  "또는 실제로 하드스톱 근처인지 확인하세요. 중단합니다.")
+            print(f"ERROR: Start position {pos_start:+.4f} rad "
+                  f"({math.degrees(pos_start):+.1f} deg) is outside the joint limit.")
             motor.stop()
             return 1, None, "initial_joint_limit"
-        print(f"정지 확인됨 (기준 위치 {pos_start:+.4f} rad). 토크 스텝 인가...")
+        print(f"Settled at {pos_start:+.4f} rad. Applying torque...")
 
         rows, stop_reason, fault_count = run_capture(motor, args.torque, pos_start, args)
     except KeyboardInterrupt:
-        print("\n\n중단됨 (Ctrl-C).")
+        print("\nInterrupted.")
         stop_reason = "keyboard_interrupt"
     finally:
         if motor is not None:
@@ -246,26 +238,21 @@ def capture_once(args, torque, run_index):
         bus.shutdown()
 
     if not rows:
-        print(f"샘플이 하나도 기록되지 않았습니다 (stop_reason={stop_reason}). CAN 응답을 확인하세요.")
+        print(f"ERROR: No samples recorded ({stop_reason}).")
         return 1, None, stop_reason
 
     duration = rows[-1][0] - rows[0][0]
     max_vel_reached = max(abs(r[2]) for r in rows)
     achieved_hz = (len(rows) - 1) / duration if duration > 0 else 0.0
 
-    print(f"\n캡처 종료: {stop_reason}")
-    print(f"  샘플 수       : {len(rows)}")
-    print(f"  구간          : {duration*1000:.1f} ms")
-    print(f"  달성 폴링율   : {achieved_hz:.0f} Hz")
-    print(f"  최대 |vel|    : {max_vel_reached:.3f} rad/s")
+    print(f"Capture: {stop_reason}, samples={len(rows)}, duration={duration*1000:.1f} ms, "
+          f"rate={achieved_hz:.0f} Hz, max|vel|={max_vel_reached:.3f} rad/s")
     if len(rows) < 15:
-        print("  경고: 샘플이 15개 미만입니다. --torque 를 낮추거나 --max-vel 을 높여 재시도 권장.")
+        print("WARNING: Fewer than 15 samples were recorded.")
     if stop_reason == "feedback_lost":
-        print(f"  오류: 피드백이 {args.feedback_timeout}s 넘게 끊겨 중단했습니다 — 토크를 건 채 "
-              "속도/회전량을 감지 못 하는 상태라 위험합니다. 이 결과는 쓰지 말고 CAN 상태 확인 후 재측정하세요.")
+        print(f"ERROR: Feedback was lost for more than {args.feedback_timeout}s. Discard this result.")
     if fault_count:
-        print(f"  참고: 피드백 프레임 중 {fault_count}/{len(rows)}개에서 fault 바이트가 0이 아니었습니다 "
-              "(해석 미검증 — 위 0x3022 레지스터 값과 비교해볼 것). 캡처는 정상 진행됨.")
+        print(f"WARNING: {fault_count}/{len(rows)} feedback frames reported a fault byte.")
 
     ts = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
     fname = (f"id{args.motor_id}_{args.model}_{args.torque:+.3f}Nm_{ts}_r{run_index:02d}.csv"
@@ -284,14 +271,13 @@ def capture_once(args, torque, run_index):
         "duration_s": f"{duration:.4f}",
     }
     save_csv(out_path, rows, meta)
-    print(f"\n저장됨: {out_path}")
+    print(f"Saved: {out_path}")
     return (0 if stop_reason in {"max_time", "max_vel", "max_turns"} else 1), out_path, stop_reason
 
 
 def main():
     args = parse_args()
-    if args.channel is None:
-        args.channel = channel_for_id(args.motor_id)
+    args.channel = channel_for_id(args.motor_id)
 
     for torque in args.torques:
         args.torque = torque
@@ -304,19 +290,19 @@ def main():
     paths = []
     failed = False
     for index, torque in enumerate(plan, 1):
-        print(f"\n{'=' * 70}\n[{index}/{len(plan)}] torque={torque:+.3f} N*m\n{'=' * 70}")
+        print(f"\n[{index}/{len(plan)}] torque={torque:+.3f} N*m")
         rc, path, stop_reason = capture_once(args, torque, index)
         if rc == 0 and path is not None:
             paths.append(path)
         if rc != 0 or stop_reason == "keyboard_interrupt":
             failed = True
-            print("안전을 위해 남은 반복 측정을 중단합니다.")
+            print("Stopping the remaining runs for safety.")
             break
         if index < len(plan):
             time.sleep(PAUSE_S)
 
     if paths:
-        print("\n이번 실행에서 생성된 CSV를 분석합니다.\n")
+        print("\nAnalyzing captured CSV files...")
         analysis = subprocess.run([sys.executable, ANALYZE, *paths])
         failed = failed or analysis.returncode != 0
     return 1 if failed or not paths else 0

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(motor_imu_test LANGUAGES CXX)
+project(imu_noise_binding LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -11,7 +11,7 @@ if(NOT IMU_N100_TEST_ROOT AND DEFINED ENV{IMU_N100_TEST_ROOT})
 endif()
 if(NOT IMU_N100_TEST_ROOT)
   get_filename_component(IMU_N100_TEST_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../IMU_N100_Test" ABSOLUTE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../IMU_N100_Test" ABSOLUTE)
 endif()
 set(N100_CPP_DIR "${IMU_N100_TEST_ROOT}/src/cpp_n100")
 if(NOT EXISTS "${N100_CPP_DIR}/CMakeLists.txt")

@@ -33,9 +33,8 @@ def load_rows(path):
 
 def main():
     p = argparse.ArgumentParser(
-        description="can_capture.py 출력 CSV를 모아 모터별 달성 Hz / 폴링 지터를 계산한다 "
-                     "(project-open-items #9: control-loop 주파수 상한).")
-    p.add_argument("csv_files", nargs="+", help="can_capture.py 출력 CSV들 (glob 가능)")
+        description="Calculate motor feedback rate and polling jitter from motor_noise.py CSV files.")
+    p.add_argument("csv_files", nargs="+", help="CSV paths or glob patterns")
     args = p.parse_args()
 
     paths = []
@@ -49,19 +48,18 @@ def main():
         meta, rows = load_rows(path)
         source = meta.get("feedback_source")
         if source != EXPECTED_FEEDBACK_SOURCE:
-            print(f"지원하지 않는 피드백 출처: {path} "
-                  f"(expected={EXPECTED_FEEDBACK_SOURCE}, got={source or '메타데이터 없음'})")
+            print(f"ERROR: Unsupported feedback source in {path} "
+                  f"(expected={EXPECTED_FEEDBACK_SOURCE}, got={source or 'missing'})")
             return 1
         for row in rows:
             by_motor[int(row["motor_id"])].append(row)
 
     if not by_motor:
-        print("샘플이 없습니다.")
+        print("ERROR: No samples.")
         return 1
 
-    print("=" * 92)
     print(f"{'ID':>3} {'ch':>4} {'n':>6} {'ok':>6} {'miss':>5} {'ok%':>6} "
-          f"{'평균Hz':>8} {'평균dt(ms)':>10} {'dt표준편차(ms)':>14} {'최대dt(ms)':>10}")
+          f"{'mean Hz':>8} {'mean dt':>10} {'dt std':>14} {'max dt':>10}")
     print("-" * 92)
     per_channel_ok = defaultdict(int)
     per_channel_span = {}
@@ -91,20 +89,16 @@ def main():
                   f"{std_dt*1000:>14.3f} {max_dt*1000:>10.3f}")
         else:
             print(f"{motor_id:>3} {ch:>4} {n:>6} {n_ok:>6} {n_miss:>5}  "
-                  f"(ok 샘플이 2개 미만이라 Hz 계산 불가)")
-    print("=" * 92)
+                  f"(fewer than 2 valid samples)")
 
-    print("\n채널별 실제 처리량 (그 채널에 물린 모든 모터가 순번대로 도는 실측 throughput):")
+    print("\nChannel throughput:")
     for ch in sorted(per_channel_ok):
         lo, hi = per_channel_span[ch]
         span = hi - lo
         if span > 0:
-            print(f"  {ch}: ok 합계 {per_channel_ok[ch]}개 / {span:.2f}s "
-                  f"= {per_channel_ok[ch]/span:.1f} Hz (해당 채널 모터 전체 합산)")
-    print("\n주의: 이 값은 request/response 왕복(motor.control()+poll_feedback())의 실측 상한이며, "
-          "채널 하나에 물린 모터 수만큼 개별 모터의 갱신 주기는 늘어난다 "
-          "(예: 채널당 6개면 개별 모터 Hz ≈ 채널 throughput/6). "
-          "sim.dt/decimation은 이 실측값보다 여유를 두고 정해야 한다.")
+            print(f"  {ch}: {per_channel_ok[ch]} valid samples / {span:.2f}s "
+                  f"= {per_channel_ok[ch]/span:.1f} Hz total")
+    print("Per-motor update rate decreases as more motors share a channel.")
     return 0
 
 

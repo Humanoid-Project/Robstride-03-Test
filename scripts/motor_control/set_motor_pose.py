@@ -51,12 +51,11 @@ def fmt(rad):
 def main():
     parser = argparse.ArgumentParser(
         description="Move motors slowly to target angles and hold until stopped.")
-    parser.add_argument("--channels", nargs="+", default=list(CHANNEL_ID_RANGES.keys()),
-                        choices=list(CHANNEL_ID_RANGES.keys()),
-                        help=f"CAN channels. Default: {' '.join(CHANNEL_ID_RANGES.keys())}")
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE, help="python-can interface")
-    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID, help="Host CAN ID")
-    parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
+    parser.set_defaults(
+        channels=list(CHANNEL_ID_RANGES),
+        interface=DEFAULT_INTERFACE,
+        host_id=HOST_ID,
+    )
     args = parser.parse_args()
 
     active_motor_ids = [mid for mid in MOTORS if channel_for_id(mid) in args.channels]
@@ -115,16 +114,15 @@ def main():
         print(f"\nMove time: about {move_time:.1f} s at {MOVE_SPEED} rad/s, "
               f"hold gains kp={HOLD_KP}, kd={HOLD_KD}")
 
-        if not args.yes:
-            if not sys.stdin.isatty():
-                print("Confirmation requires an interactive terminal or --yes.")
-                return 1
-            try:
-                answer = input("\nPress Enter to start, or Ctrl-C to cancel: ")
-                del answer
-            except (KeyboardInterrupt, EOFError):
-                print("\nCancelled.")
-                return 0
+        if not sys.stdin.isatty():
+            print("Confirmation requires an interactive terminal.")
+            return 1
+        try:
+            answer = input("\nPress Enter to start, or Ctrl-C to cancel: ")
+            del answer
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return 0
 
         def emergency_stop(reason):
             print(f"\nEmergency stop: {reason}")

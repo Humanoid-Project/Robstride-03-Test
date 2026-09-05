@@ -29,17 +29,14 @@ DEFAULT_INTERVAL = 0.1
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="관절을 손으로 움직이며 실시간 min/max를 추적하다가 Enter를 누르면 결과를 저장한다.")
+        description="Track joint minimum and maximum positions until Enter is pressed.")
     parser.add_argument("--motor-id", "--motor-ids", dest="motor_id", nargs="+",
                         type=lambda v: int(v, 0), default=list(range(1, 13)),
-                        help="추적할 모터 ID, 기본: 1~12")
-    parser.add_argument("--interface", default=DEFAULT_INTERFACE,
-                        help="python-can 인터페이스, 기본: socketcan")
-    parser.add_argument("--host-id", type=lambda v: int(v, 0), default=HOST_ID)
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
-                        help="모터당 mechPos 응답 대기시간(초), 기본: 0.1")
-    parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL,
-                        help="화면 갱신 주기(초), 기본: 0.1")
+                        help="Motor IDs to scan")
+    parser.set_defaults(
+        interface=DEFAULT_INTERFACE, host_id=HOST_ID,
+        timeout=DEFAULT_TIMEOUT, interval=DEFAULT_INTERVAL,
+    )
     return parser.parse_args()
 
 
@@ -55,7 +52,7 @@ def poll_worker(channel, motor_ids, interface, host_id, timeout,
         bus = can.Bus(channel=channel, interface=interface)
     except OSError as error:
         with lock:
-            notes.append(f"[{channel}] 열기 실패: {error}  "
+            notes.append(f"[{channel}] open failed: {error}  "
                          f"(sudo ip link set {channel} up type can bitrate 1000000)")
         return
     motors = {
@@ -75,7 +72,7 @@ def poll_worker(channel, motor_ids, interface, host_id, timeout,
                     minmax[motor_id] = (min(lo, position), max(hi, position))
     except can.CanError as error:
         with lock:
-            notes.append(f"[{channel}] CAN 오류: {error}")
+            notes.append(f"[{channel}] CAN error: {error}")
     finally:
         bus.shutdown()
 
@@ -91,9 +88,9 @@ def wait_for_enter(stop):
 def render(motor_ids, state, minmax, samples, notes):
     lines = ["\033[2J\033[3J\033[H"]
     lines.append(f"joint limit scan   {time.strftime('%H:%M:%S')}   "
-                 "관절을 천천히 끝까지 움직여보고 Enter로 종료\n")
-    lines.append(f"  {'ID':>3}  {'joint':<18}  {'현재':>8}  {'min':>8}  {'max':>8}  "
-                 f"{'폭':>7}  {'현재 한계(deg)':>18}  {'n':>6}")
+                 "Move each joint slowly through its range; press Enter to stop.\n")
+    lines.append(f"  {'ID':>3}  {'joint':<18}  {'current':>8}  {'min':>8}  {'max':>8}  "
+                 f"{'span':>7}  {'defined limit':>18}  {'n':>6}")
     lines.append("  " + "-" * 88)
     for motor_id in motor_ids:
         lo, hi = minmax[motor_id]
@@ -113,7 +110,7 @@ def render(motor_ids, state, minmax, samples, notes):
 
 
 def print_summary(motor_ids, minmax, samples):
-    print(f"\n{'ID':>3}  {'joint':<18}  {'min':>8}  {'max':>8}  {'폭':>7}  {'현재 한계(deg)':>18}  {'n':>6}")
+    print(f"\n{'ID':>3}  {'joint':<18}  {'min':>8}  {'max':>8}  {'span':>7}  {'defined limit':>18}  {'n':>6}")
     print("-" * 88)
     for motor_id in motor_ids:
         lo, hi = minmax[motor_id]
@@ -157,7 +154,7 @@ def main():
     motor_ids = sorted(set(args.motor_id))
     unknown = [motor_id for motor_id in motor_ids if motor_id not in JOINT_MAP]
     if unknown:
-        print(f"지원하지 않는 motor-id: {unknown}")
+        print(f"ERROR: Unsupported motor IDs: {unknown}")
         return 1
 
     channels = sorted({channel_for_id(motor_id) for motor_id in motor_ids})
@@ -184,8 +181,7 @@ def main():
     for thread in threads:
         thread.start()
 
-    print("측정을 시작합니다. 관절들을 손으로 천천히 끝까지 움직여보세요.")
-    print("다 끝나면 Enter를 누르세요 (Ctrl-C로도 종료 가능).\n")
+    print("Move each joint slowly through its full range. Press Enter to save or Ctrl-C to stop.")
     enter_thread = threading.Thread(target=wait_for_enter, args=(stop,), daemon=True)
     enter_thread.start()
 
@@ -211,10 +207,10 @@ def main():
     print_summary(motor_ids, final_minmax, final_samples)
     missing = [motor_id for motor_id in motor_ids if final_samples[motor_id] == 0]
     if missing:
-        print(f"\n응답 없었던 모터: {missing} (CSV에는 min/max 빈 값으로 저장됨)")
+        print(f"WARNING: No samples from motor IDs {missing}.")
 
     path = save_csv(motor_ids, final_minmax, final_samples)
-    print(f"\n저장됨: {path}")
+    print(f"Saved: {path}")
     return 0
 
 
