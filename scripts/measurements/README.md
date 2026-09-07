@@ -17,6 +17,8 @@ measurements/
 ├── friction/
 │   ├── friction.py
 │   └── analyze_friction.py
+├── torque/
+│   └── torque.py
 ├── joint/
 │   ├── read_joint_values.py
 │   └── scan_joint_limits.py
@@ -125,6 +127,22 @@ python3 scripts/measurements/friction/friction.py --motor-id 4 --model rs03
 ```bash
 # Example
 python3 scripts/measurements/friction/analyze_friction.py "scripts/measurements/friction/data/*.csv"
+```
+
+## torque
+
+`torque.py` passively displays type `0x02` torque feedback from all 12 motors. It sends no CAN frames, so a motor controller such as `mujoco_to_real.py` must run separately. The displayed value is the motor controller's internal torque estimate, not an independent load-cell measurement.
+
+### `torque.py`
+
+| Command | Option | Default | Description |
+| --- | --- | --- | --- |
+| - | `--refresh` | `10` | Set the terminal refresh rate in Hz |
+| - | `--stale-after` | `0.3` | Set the stale-feedback threshold in seconds |
+
+```bash
+# Example
+python3 scripts/measurements/torque/torque.py
 ```
 
 ## joint
